@@ -106,3 +106,13 @@ export const CAST = [
 ];
 
 export const THEMES = ["classic", "princess", "neon", "european", "japanese", "kabukicho"];
+
+/** 발자국이 격자에서 차지하는 칸 수 [가로, 세로]. 타일 1칸 = 1m 이므로 미터를 올림한다.
+ *  벽에 거는 것(세로 0)은 바닥을 안 쓰므로 [0, 0].
+ *  렌더러의 점유 격자가 이 값을 읽는다 — 배치와 충돌이 같은 숫자를 쓰게 하려는 것이다. */
+export function cellsOf(name) {
+  const m = SIZE[name];
+  if (!m) return [1, 1];
+  if (m[1] === 0) return [0, 0];
+  return [Math.max(1, Math.round(m[0])), Math.max(1, Math.round(m[1]))];
+}

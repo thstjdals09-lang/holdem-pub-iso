@@ -20,7 +20,7 @@ import {
   keyMagenta, deFringe, stripGridLines, components, mergeNear,
   cellUnion, gridBoxes, readingOrder, crop, shrink, posterize,
 } from "./sheet-cut.mjs";
-import { ACTOR, CAST, THEMES, widthOf, heightOf } from "./pack-spec.mjs";
+import { ACTOR, CAST, THEMES, widthOf, heightOf, cellsOf } from "./pack-spec.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RAW = join(ROOT, "assets/raw/sheets");
@@ -115,7 +115,8 @@ for (const theme of THEMES) {
     PROP_ORDER[kind].forEach((name, i) => {
       if (!boxes[i]) return;
       const out = bake(img, boxes[i], { width: widthOf(name), hmax: heightOf(name) });
-      manifest[name] = { w: out.w, h: out.h, axis: axisOf(out) };
+      const [gw, gd] = cellsOf(name);
+      manifest[name] = { w: out.w, h: out.h, axis: axisOf(out), gw, gd };
       if (WRITE) writeFileSync(join(propDir, name + ".png"), encodePng(out.w, out.h, out.data));
       made++;
     });
@@ -196,7 +197,8 @@ for (const theme of THEMES) {
       if (!r.boxes[i]) return;
       const ref = WIDTHS[name];
       const out = bake(r.img, r.boxes[i], { width: widthOf(ref), hmax: heightOf(ref) });
-      manifest[name] = { w: out.w, h: out.h, axis: axisOf(out) };
+      const [gw, gd] = cellsOf(ref);
+      manifest[name] = { w: out.w, h: out.h, axis: axisOf(out), gw, gd };
       if (WRITE) writeFileSync(join(propDir, name + ".png"), encodePng(out.w, out.h, out.data));
     });
     console.log(`  ${theme}/seat     성분 ${String(r.n).padStart(2)} → 12개`);

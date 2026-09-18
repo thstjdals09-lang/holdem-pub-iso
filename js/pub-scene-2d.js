@@ -301,7 +301,10 @@ const PubScene2D = (() => {
   // ---------------- 배치 ----------------
   // 테이블은 "대표 3~4개"만 크게 보여준다. 게임이 그 이상을 들고 있어도 화면은
   // 4개까지만 그리고, 나머지 성장은 손님 수·직원·소품·바 레벨로 드러낸다.
-  const MAX_TABLES = 4;
+  // 화면에 그리는 테이블 수의 상한. 예전에는 4였는데, 그건 "표에 손으로 적어 둔
+  // 자리가 4개뿐"이라는 뜻이었다 — 겹침을 막아 줄 게 손으로 맞춘 좌표밖에 없었다.
+  // 이제 점유 격자가 겹침을 막으므로 표를 다 쓰면 빈 칸을 찾아 더 놓는다.
+  const MAX_TABLES = 6;
   // 자리는 화면에서 먼저 잡고 격자로 역산했다(535×1040 기준). 아이소에서는
   // "격자에 고르게" 놓으면 화면에서는 겹친다 — 테이블 한 대가 화면 140×110을 먹는다.
   const PLANS = [
@@ -390,22 +393,89 @@ const PubScene2D = (() => {
     return { gx, gy, sprite, flip: f.flip, bob };
   }
 
-  /** 사람이 지나가면 안 되는 곳(테이블·바·소파). 반지름은 격자 칸 단위. */
-  function makeBlocks(slots, bar, booths, host) {
-    const b = [];
-    for (const t of slots) if (t.owned) b.push({ x: t.cx, y: t.cy, r: 2.7 });
-    if (bar) { for (let g = bar.cy - bar.len / 2; g <= bar.cy + bar.len / 2; g += 1) b.push({ x: 1.6, y: g, r: 2.0 }); }
-    for (const s2 of booths) b.push({ x: s2[0], y: s2[1], r: 1.7 });
-    if (host) b.push({ x: host.cx, y: host.cy, r: 1.2 });
-    return b;
+  // ---------------- 점유 격자 ----------------
+  /** 칸 하나하나가 "누가 쓰는 중"인지 적어 두는 표.
+   *
+   *  예전에는 같은 개념이 두 군데에 따로 있었다 — 가구 자리는 손으로 맞춘 좌표표
+   *  (PLANS), 사람이 못 지나가는 곳은 손으로 고른 반지름의 원 목록. 둘이 어긋나면
+   *  사람이 테이블을 뚫거나, 놓을 수 있는 자리를 놓을 수 없다고 하거나 했다.
+   *  이제 한 표만 본다.
+   *
+   *  두 겹으로 들고 있다.
+   *    solid   — 물건이 실제로 깔고 앉은 칸. 다른 물건을 못 놓는다.
+   *    blocked — 거기에 더해 사람이 못 지나가는 칸(의자가 놓일 테이블 둘레 등).
+   *  가구는 놓을 수 있지만 사람은 못 지나가는 칸이 있으므로 둘을 나눠야 한다. */
+  function makeOcc(W, D) {
+    const solid = new Uint8Array(W * D);
+    const blocked = new Uint8Array(W * D);
+    const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < D;
+    const at = (a, x, y) => (inside(x, y) ? a[y * W + x] : 1);   // 방 밖은 막힌 것으로 본다
+    /** 중심 c에 n칸짜리를 놓았을 때 차지하는 칸 범위 [시작, 끝). */
+    const span = (c, n) => { const a = Math.round(c - n / 2); return [a, a + n]; };
+    const rect = (arr, cx, cy, gw, gd, pad, v) => {
+      const [x0, x1] = span(cx, gw), [y0, y1] = span(cy, gd);
+      for (let y = y0 - pad; y < y1 + pad; y++)
+        for (let x = x0 - pad; x < x1 + pad; x++)
+          if (inside(x, y)) arr[y * W + x] = v;
+    };
+    return {
+      W, D,
+      /** 그 자리에 gw×gd 를 놓을 수 있나 (pad 만큼 여유까지 비어 있어야 한다) */
+      fits(cx, cy, gw, gd, pad = 0) {
+        if (!gw || !gd) return true;                 // 벽에 거는 것은 바닥을 안 쓴다
+        const [x0, x1] = span(cx, gw), [y0, y1] = span(cy, gd);
+        for (let y = y0 - pad; y < y1 + pad; y++)
+          for (let x = x0 - pad; x < x1 + pad; x++) {
+            if (!inside(x, y)) return false;
+            if (solid[y * W + x]) return false;
+          }
+        return true;
+      },
+      /** 놓는다. walkPad 는 "가구는 못 놓지만 사람도 못 지나가는" 둘레(의자 자리). */
+      put(cx, cy, gw, gd, walkPad = 0) {
+        if (!gw || !gd) return;
+        rect(solid, cx, cy, gw, gd, 0, 1);
+        rect(blocked, cx, cy, gw, gd, walkPad, 1);
+      },
+      /** 사람이 지나갈 수 없는 자리인가 */
+      blockedAt(x, y) { return !!at(blocked, Math.round(x - 0.5), Math.round(y - 0.5)); },
+    };
   }
-  const isBlocked = (b, x, y) => b.some((o) => (x - o.x) * (x - o.x) + (y - o.y) * (y - o.y) < o.r * o.r);
-  /** 방 안에서 막히지 않은 점 하나 */
-  function freeSpot(b, W, D, seed, taken) {
+
+  /** 격자에서 gw×gd 가 들어갈 빈 자리를 찾는다. 방 한가운데에 가까운 쪽을 먼저 본다 —
+   *  구석에 처박히면 화면에서 안 보이거나 벽에 끼인 것처럼 보인다. */
+  function findSpot(grid, gw, gd, pad, avoid) {
+    const { W, D } = grid;
+    let best = null, bestScore = -Infinity;
+    for (let y = 1; y < D - 1; y++)
+      for (let x = 1; x < W - 1; x++) {
+        const cx = x + gw / 2, cy = y + gd / 2;
+        if (!grid.fits(cx, cy, gw, gd, pad)) continue;
+        // 발자국만 안 겹치면 되는 게 아니다 — 좌석 링은 발자국 밖에 그려지므로
+        // 이미 있는 테이블에서 멀수록 좋다. 중앙에서 너무 멀어지면(구석) 감점.
+        let near = Infinity;
+        for (const a of avoid || []) near = Math.min(near, Math.hypot(cx - a[0], cy - a[1]));
+        if (near === Infinity) near = 6;
+        const score = Math.min(near, 6) - 0.35 * (Math.abs(cx - W / 2) + Math.abs(cy - D / 2));
+        if (score > bestScore) { bestScore = score; best = [cx, cy]; }
+      }
+    return best;
+  }
+
+  /** 에셋의 발자국 칸 수. 매니페스트에 구울 때 적어 둔 값(tools/pack-spec.cellsOf). */
+  function cellsOf(key) {
+    const m = MANIFEST[theme] || MANIFEST.classic;
+    const e = m && m[key];
+    return e && e.gw !== undefined ? [e.gw, e.gd] : [1, 1];
+  }
+
+  /** 방 안에서 사람이 설 수 있는 점 하나 */
+  function freeSpot(occ, seed, taken) {
+    const { W, D } = occ;
     for (let i = 0; i < 60; i++) {
       const x = 1.3 + (hash(seed + i * 7) % 1000) / 1000 * (W - 2.6);
       const y = 1.3 + (hash(seed + i * 13 + 3) % 1000) / 1000 * (D - 2.6);
-      if (isBlocked(b, x, y)) continue;
+      if (occ.blockedAt(x, y)) continue;
       // 이미 자리 잡은 사람과 너무 가까우면 다시 고른다 — 사람끼리 겹치던 원인
       if (taken && taken.some((t) => (t[0] - x) ** 2 + (t[1] - y) ** 2 < 2.2 * 2.2)) continue;
       return [x, y];
@@ -413,16 +483,16 @@ const PubScene2D = (() => {
     return [W / 2, D / 2];
   }
   /** 두 점을 잇는 직선이 아무것도 안 뚫는 경로. 못 찾으면 null. */
-  function freePath(b, W, D, seed, taken) {
+  function freePath(occ, seed, taken) {
     for (let k = 0; k < 14; k++) {
-      const A = freeSpot(b, W, D, seed + k * 131, taken);
-      const B = freeSpot(b, W, D, seed + k * 197 + 41);
+      const A = freeSpot(occ, seed + k * 131, taken);
+      const B = freeSpot(occ, seed + k * 197 + 41);
       const d = Math.hypot(A[0] - B[0], A[1] - B[1]);
       if (d < 3.5) continue;
       let ok = true;
       for (let i = 1; i < 12; i++) {
         const t2 = i / 12;
-        if (isBlocked(b, A[0] + (B[0] - A[0]) * t2, A[1] + (B[1] - A[1]) * t2)) { ok = false; break; }
+        if (occ.blockedAt(A[0] + (B[0] - A[0]) * t2, A[1] + (B[1] - A[1]) * t2)) { ok = false; break; }
       }
       if (ok) return { from: A, to: B };
     }
@@ -434,7 +504,7 @@ const PubScene2D = (() => {
     const capacity = Math.max(1, s.capacity | 0);
     const shown = Math.min(MAX_TABLES, Math.max(1, owned + (owned < capacity ? 1 : 0)));
     const narrow = VW < 460;
-    const plan = (narrow ? PLANS_NARROW : PLANS)[shown - 1];
+    const plan = (narrow ? PLANS_NARROW : PLANS)[Math.min(shown, 4) - 1];
     ROOM = { w: plan.w, d: plan.d };
 
     // 방을 화면 가로에 맞춘다. 좌우 꼭짓점은 일부러 화면 밖으로 흘린다(카메라가 안쪽).
@@ -473,6 +543,49 @@ const PubScene2D = (() => {
     // ── 입구 · 대회 데스크 (사람 배치가 이 자리를 피해야 해서 먼저 정한다) ──
     const entrance = { gx: W, gy: Math.round(D * 0.78) };
     const host = s.tournamentWins > 0 ? { cx: W - 1.1, cy: D - 1.6 } : null;
+
+    // ── 화분 · 소품 ──
+    const props = [];
+    const P = (a, cx, cy, axis) => props.push({ a, cx, cy, axis: axis || "gx" });
+    P("palm", 7.0, 0.6); P("palm", 0.6, 0.6); P("palm", W - 0.6, D - 0.7);
+    const plantLv = (s.decor && s.decor.plant) || 0;
+    // 세 번째 값 = 좌우반전 여부 (세로줄에 놓는 것은 원본, 가로줄은 반전)
+    const plantSpots = [[5.6, 0.6, "gx"], [2.8, 0.6, "gx"], [9.8, 3.4, "gy"],
+                        [7.4, D - 0.8, true], [2.6, 9.6, false], [11.4, 6.4, false]];
+    for (let i = 0; i < Math.min(plantLv, plantSpots.length); i++) {
+      const sp = plantSpots[i];
+      P("flower_bed", sp[0], sp[1], sp[2]);
+    }
+    // 냉장고는 바 끝에 붙인다(오른쪽 벽은 화면 밖이다)
+    if ((s.fixtures && s.fixtures.fridge) > 0) props.push({ a: "fridge", cx: 1.3, cy: 6.9, fixture: "fridge" });
+
+    // ── 점유 격자 ── 가구가 깔고 앉은 칸을 한 장에 모은다.
+    //  여기 올라간 것만 "있는 것"이다 — 사람 자리 고르기, 보행 경로, 추가 배치가
+    //  전부 이 표 하나를 본다.
+    const grid = makeOcc(W, D);
+    for (const t of slots) if (t.owned) {
+      const [gw, gd] = cellsOf("table_6");
+      grid.put(t.cx, t.cy, gw, gd, 1);      // 둘레 한 칸은 의자 자리 — 사람이 가로지르면 안 된다
+    }
+    if (bar) {
+      // 카운터 + 안쪽 작업 공간 + 스툴 줄까지 한 덩어리로 본다
+      for (let g = bar.cy - bar.len / 2; g <= bar.cy + bar.len / 2; g += 1) grid.put(1.6, g, 3, 1, 0);
+    }
+    for (const b2 of booths) { const [gw, gd] = cellsOf("sofa"); grid.put(b2[0], b2[1], gw, gd, 1); }
+    if (host) { const [gw, gd] = cellsOf("host_desk"); grid.put(host.cx, host.cy, gw, gd, 0); }
+    for (const p of props) { const [gw, gd] = cellsOf(p.a); grid.put(p.cx, p.cy, gw, gd, 0); }
+
+    // 표(PLANS)에 적힌 자리를 다 쓰고도 테이블이 남으면 격자에서 빈 자리를 찾아 놓는다.
+    // 손으로 맞춘 1~4번 자리의 구도는 그대로 두고, 그 다음부터만 자동으로 채운다.
+    {
+      const [tw, td] = cellsOf("table_6");
+      for (let n = slots.length; n < shown; n++) {
+        const spot = findSpot(grid, tw, td, 1, slots.map((t) => [t.cx, t.cy]));
+        if (!spot) break;
+        slots.push({ i: n, cx: spot[0], cy: spot[1], owned: n < owned });
+        grid.put(spot[0], spot[1], tw, td, 1);
+      }
+    }
 
     // ── 사람 ──
     const people = [];
@@ -532,12 +645,11 @@ const PubScene2D = (() => {
       }
     });
     // 서버 — 홀을 가로지른다 (쟁반 든 그림은 한 장뿐이라 방향만 맞춘다)
-    const blocks = makeBlocks(slots, bar, booths, host);
     const taken = [];          // 걸어다니는 사람들의 출발점 — 서로 떨어뜨린다
     const servers = Math.min(3, (s.staff && s.staff.server) || 0);
     for (let i = 0; i < servers; i++) {
       const seed = 700 + i * 11;
-      const path = freePath(blocks, W, D, seed, taken);
+      const path = freePath(grid, seed, taken);
       if (!path) continue;
       taken.push(path.from);
       people.push({ gx: path.from[0], gy: path.from[1], mode: "staff", sprite: "sv_tray", walkSet: "sv_walk", seed,
@@ -548,27 +660,20 @@ const PubScene2D = (() => {
     const walkers = Math.min(3, 1 + Math.round(occ * 2));
     for (let i = 0; i < walkers; i++) {
       const seed = 400 + i * 23;
-      const path = freePath(blocks, W, D, seed, taken);
+      const path = freePath(grid, seed, taken);
       if (!path) continue;
       taken.push(path.from);
       people.push({ gx: path.from[0], gy: path.from[1], mode: "walk", who: "a", seed,
                     walk: { ...path, speed: 0.00009 + i * 0.00002 } });
     }
 
-    // ── 화분 · 소품 ──
-    const props = [];
-    const P = (a, cx, cy, axis) => props.push({ a, cx, cy, axis: axis || "gx" });
-    P("palm", 7.0, 0.6); P("palm", 0.6, 0.6); P("palm", W - 0.6, D - 0.7);
-    const plantLv = (s.decor && s.decor.plant) || 0;
-    // 세 번째 값 = 좌우반전 여부 (세로줄에 놓는 것은 원본, 가로줄은 반전)
-    const plantSpots = [[5.6, 0.6, "gx"], [2.8, 0.6, "gx"], [9.8, 3.4, "gy"],
-                        [7.4, D - 0.8, true], [2.6, 9.6, false], [11.4, 6.4, false]];
-    for (let i = 0; i < Math.min(plantLv, plantSpots.length); i++) {
-      const sp = plantSpots[i];
-      P("flower_bed", sp[0], sp[1], sp[2]);
-    }
-    // 냉장고는 바 끝에 붙인다(오른쪽 벽은 화면 밖이다)
-    if ((s.fixtures && s.fixtures.fridge) > 0) props.push({ a: "fridge", cx: 1.3, cy: 6.9, fixture: "fridge" });
+    // ── 벽 ── 벽은 칸이 아니라 **칸의 모서리**에 산다.
+    //  wallsN[gx] = 칸 (gx,0)의 북쪽 모서리,  wallsW[gy] = 칸 (0,gy)의 서쪽 모서리.
+    //  값은 조각의 종류다 — "wall" / "door" / "open"(구멍). 문을 내는 것은 벽을
+    //  뚫는 게 아니라 그 모서리의 조각을 바꾸는 것이다. 통판 두 장으로 그리던 때는
+    //  이걸 할 수 없었다.
+    const wallsN = Array.from({ length: W }, () => "wall");
+    const wallsW = Array.from({ length: D }, () => "wall");
 
     // ── 벽 장식 ──
     const decor = s.decor || {};
@@ -625,6 +730,7 @@ const PubScene2D = (() => {
     const bySum = (a, b) => (a.cx + a.cy) - (b.cx + b.cy);
     return {
       slots, expand, bar, booths, people, props, wallN, wallW, sconceN, sconceW, entrance, host,
+      wallsN, wallsW, grid,
       outBack: out.filter((o) => o.cx < 0 || o.cy < 0).sort(bySum),
       outFront: out.filter((o) => !(o.cx < 0 || o.cy < 0)),
     };
@@ -693,26 +799,52 @@ const PubScene2D = (() => {
     }
   }
 
-  /** 뒷벽 두 면 — 타일마다 찍지 않고 한 판으로 그려야 깔끔하다. */
-  function drawBackWalls() {
+  /** 뒷벽 — **한 칸 폭 조각**을 하나씩, 다른 물건과 같은 정렬 큐에 넣는다.
+   *
+   *  예전에는 통판 두 장을 큐 밖에서 먼저 그렸다. 그래서 (1) 벽 조각이 사람·가구와
+   *  앞뒤를 겨룰 수 없었고, (2) 문·창을 낼 수 없었고, (3) 방이 사각형 하나라고
+   *  가정할 수밖에 없었다. 앞벽(frontWall)은 처음부터 조각 단위였다 — 그쪽 방식을
+   *  뒷벽으로 옮긴 것이다.
+   *
+   *  깊이 키는 그 조각이 붙은 칸보다 살짝 앞(-0.5)이다. 같은 칸에 있는 물건이
+   *  언제나 벽보다 나중에 그려져 벽 앞에 서게 된다. */
+  function drawBackWalls(L, add) {
     const T = THEMES[theme] || THEMES.classic;
-    const wall = (ax, ay, bx, by, col) => {
+    /** 모서리 하나. dir +1 = 북쪽 벽(gx를 따라), -1 = 서쪽 벽(gy를 따라). */
+    const seg = (ax, ay, bx, by, col, kind) => {
+      if (kind === "open") return;
       const A = [sx(ax, ay), sy(ax, ay)], B = [sx(bx, by), sy(bx, by)];
+      const hi = kind === "door" ? WALL_H * 0.42 : WALL_H;      // 문은 위쪽만 남긴다(상인방)
       const At = [A[0], A[1] - WALL_H], Bt = [B[0], B[1] - WALL_H];
-      poly([A, B, Bt, At], col);
-      poly([A, B, [B[0], B[1] - WAIN], [A[0], A[1] - WAIN]], T.wain);
-      line(A[0], A[1] - WAIN, B[0], B[1] - WAIN, PixelArt.shade(T.wain, 0.3));
+      if (kind === "door") {
+        // 문틀: 위쪽 상인방만 벽으로 남기고 아래는 뚫는다
+        poly([[A[0], A[1] - WALL_H + hi], [B[0], B[1] - WALL_H + hi], Bt, At], col);
+      } else {
+        poly([A, B, Bt, At], col);
+        poly([A, B, [B[0], B[1] - WAIN], [A[0], A[1] - WAIN]], T.wain);
+        line(A[0], A[1] - WAIN, B[0], B[1] - WAIN, PixelArt.shade(T.wain, 0.3));
+      }
       poly([At, Bt, [B[0], B[1] - WALL_H + 5 * S], [A[0], A[1] - WALL_H + 5 * S]], T.beam);
     };
-    wall(0, 0, ROOM.w, 0, T.wall);      // 북쪽(오른쪽 위)
-    wall(0, 0, 0, ROOM.d, T.wallW);     // 서쪽(왼쪽 위)
-    for (let g = 2; g < ROOM.w; g += 3) {
-      const x = sx(g, 0), y = sy(g, 0);
-      poly([[x, y], [x + 3 * S, y + 1.5 * S], [x + 3 * S, y + 1.5 * S - WALL_H], [x, y - WALL_H]], T.stud);
+    /** 기둥 — 3칸마다. 조각에 딸린 장식이라 조각과 같이 그린다. */
+    const stud = (gx, gy, dir) => {
+      const x = sx(gx, gy), y = sy(gx, gy);
+      const dy = 1.5 * S * dir;
+      poly([[x, y], [x + 3 * S, y + dy], [x + 3 * S, y + dy - WALL_H], [x, y - WALL_H]], T.stud);
+    };
+    for (let g = 0; g < ROOM.w; g++) {
+      const kind = L.wallsN[g] || "wall";
+      add(g - 0.5, () => {
+        seg(g, 0, g + 1, 0, T.wall, kind);
+        if (g >= 2 && g % 3 === 2) stud(g, 0, 1);
+      });
     }
-    for (let g = 2; g < ROOM.d; g += 3) {
-      const x = sx(0, g), y = sy(0, g);
-      poly([[x, y], [x + 3 * S, y - 1.5 * S], [x + 3 * S, y - 1.5 * S - WALL_H], [x, y - WALL_H]], T.stud);
+    for (let g = 0; g < ROOM.d; g++) {
+      const kind = L.wallsW[g] || "wall";
+      add(g - 0.5, () => {
+        seg(0, g, 0, g + 1, T.wallW, kind);
+        if (g >= 2 && g % 3 === 2) stud(0, g, -1);
+      });
     }
   }
 
@@ -854,13 +986,6 @@ const PubScene2D = (() => {
     drawGround();
     for (const o of L.outBack) blitProp(o.a, o.cx, o.cy, o.axis);
 
-    drawBackWalls();
-    marquee(Math.min(3.4, ROOM.w - 3), 1);
-    for (const d of L.wallN) hangWall(d.a, sx(d.g, 0) - TW / 4, sy(d.g, 0) - TH / 4 - 36 * S, 1);
-    for (const d of L.wallW) hangWall(d.a, sx(0, d.g) + TW / 4, sy(0, d.g) - TH / 4 - 36 * S, -1);
-    for (const g of L.sconceN) sconce(sx(g, 0), sy(g, 0) - WALL_H + 28 * S, 1);
-    for (const g of L.sconceW) sconce(sx(0, g), sy(0, g) - WALL_H + 28 * S, -1);
-
     // 바닥 데칼 — 러그 · 레드카펫
     for (const s of L.slots) if (s.owned) blitProp("rug_rect", s.cx, s.cy, "gy");
     {
@@ -875,6 +1000,21 @@ const PubScene2D = (() => {
     // ---- 깊이 정렬 ----
     const items = [];
     const add = (d, fn) => items.push({ d, fn });
+
+    // 벽과 벽에 걸린 것들도 같은 큐에 넣는다. 벽보다 살짝 뒤(+0.05)에 걸어 두면
+    // 제 조각 바로 다음에 그려져 벽에 붙어 보인다.
+    drawBackWalls(L, add);
+    // 간판은 한 칸이 아니라 세 칸쯤을 덮는다. 제 칸 깊이로 넣으면 오른쪽 벽 조각이
+    // 나중에 그려지며 간판의 오른쪽 절반을 덮어 "HOLDEM"까지만 남는다 — 덮는 폭의
+    // 오른쪽 끝 칸으로 깊이를 민다.
+    {
+      const g = Math.min(3.4, ROOM.w - 3);
+      add(g + 1.1, () => marquee(g, 1));
+    }
+    for (const d of L.wallN) add(d.g - 0.45, () => hangWall(d.a, sx(d.g, 0) - TW / 4, sy(d.g, 0) - TH / 4 - 36 * S, 1));
+    for (const d of L.wallW) add(d.g - 0.45, () => hangWall(d.a, sx(0, d.g) + TW / 4, sy(0, d.g) - TH / 4 - 36 * S, -1));
+    for (const g of L.sconceN) add(g - 0.44, () => sconce(sx(g, 0), sy(g, 0) - WALL_H + 28 * S, 1));
+    for (const g of L.sconceW) add(g - 0.44, () => sconce(sx(0, g), sy(0, g) - WALL_H + 28 * S, -1));
 
     for (const o of L.outFront) {
       const px = Math.round(sx(o.cx, o.cy)), py = Math.round(sy(o.cx, o.cy));

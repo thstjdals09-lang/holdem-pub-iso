@@ -2,301 +2,421 @@
  "table_6": {
   "w": 40,
   "h": 40,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 2,
+  "gd": 1
  },
  "table_8": {
   "w": 45,
   "h": 45,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 3,
+  "gd": 1
  },
  "chair": {
   "w": 16,
   "h": 16,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "dealer_chair": {
   "w": 19,
   "h": 19,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "stool": {
   "w": 13,
   "h": 13,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "sofa": {
   "w": 35,
   "h": 35,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 2,
+  "gd": 1
  },
  "armchair": {
   "w": 28,
   "h": 28,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "lounge_table": {
   "w": 25,
   "h": 25,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "rug_rect": {
   "w": 35,
   "h": 35,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 3,
+  "gd": 2
  },
  "rug_round": {
   "w": 35,
   "h": 35,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 2
  },
  "side_table": {
   "w": 19,
   "h": 19,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "partition": {
   "w": 29,
   "h": 29,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 2,
+  "gd": 1
  },
  "bar_straight": {
   "w": 43,
   "h": 37,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 2,
+  "gd": 1
  },
  "bar_corner": {
   "w": 45,
   "h": 31,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "back_bar": {
   "w": 32,
   "h": 45,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 2,
+  "gd": 1
  },
  "beer_tap": {
   "w": 11,
   "h": 15,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "fridge": {
   "w": 24,
   "h": 35,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 1,
+  "gd": 1
  },
  "sink": {
   "w": 21,
   "h": 26,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 1,
+  "gd": 1
  },
  "cart": {
   "w": 24,
   "h": 24,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "coffee": {
   "w": 11,
   "h": 16,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "bottle_cabinet": {
   "w": 22,
   "h": 33,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "tray": {
   "w": 10,
   "h": 9,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "snack": {
   "w": 10,
   "h": 7,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "safe": {
   "w": 21,
   "h": 24,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "pendant": {
   "w": 9,
   "h": 16,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "chandelier": {
   "w": 26,
   "h": 28,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "sconce": {
   "w": 8,
   "h": 11,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 1,
+  "gd": 1
  },
  "art_large": {
   "w": 16,
   "h": 21,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 0,
+  "gd": 0
  },
  "art_small": {
   "w": 10,
   "h": 16,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 0,
+  "gd": 0
  },
  "menu_board": {
   "w": 13,
   "h": 15,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 0,
+  "gd": 0
  },
  "neon": {
   "w": 16,
   "h": 18,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 0,
+  "gd": 0
  },
  "dartboard": {
   "w": 8,
   "h": 8,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 0,
+  "gd": 0
  },
  "jukebox": {
   "w": 22,
   "h": 36,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "clock": {
   "w": 6,
   "h": 7,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 0,
+  "gd": 0
  },
  "trophy_case": {
   "w": 26,
   "h": 39,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 1,
+  "gd": 1
  },
  "palm": {
   "w": 29,
   "h": 49,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "door": {
   "w": 20,
   "h": 36,
-  "axis": "gx"
+  "axis": "gx",
+  "gw": 1,
+  "gd": 1
  },
  "board": {
   "w": 19,
   "h": 27,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "stanchion": {
   "w": 18,
   "h": 23,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "coat_rack": {
   "w": 17,
   "h": 39,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "host_desk": {
   "w": 35,
   "h": 37,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 1
  },
  "street_lamp": {
   "w": 16,
   "h": 63,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "tree": {
   "w": 51,
   "h": 72,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 2,
+  "gd": 2
  },
  "bush": {
   "w": 26,
   "h": 22,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "bench": {
   "w": 30,
   "h": 31,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 2,
+  "gd": 1
  },
  "flower_bed": {
   "w": 27,
   "h": 23,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "trash_bin": {
   "w": 17,
   "h": 24,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "taxi": {
   "w": 92,
   "h": 73,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 4,
+  "gd": 2
  },
  "chair_f": {
   "w": 15,
   "h": 23,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "chair_b": {
   "w": 16,
   "h": 23,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "dealer_chair_f": {
   "w": 16,
   "h": 26,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "dealer_chair_b": {
   "w": 18,
   "h": 26,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 1,
+  "gd": 1
  },
  "armchair_f": {
   "w": 24,
   "h": 29,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "armchair_b": {
   "w": 27,
   "h": 29,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "sofa_f": {
   "w": 36,
   "h": 35,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 1
  },
  "sofa_b": {
   "w": 41,
   "h": 35,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 1
  },
  "bench_f": {
   "w": 32,
   "h": 31,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 1
  },
  "bench_b": {
   "w": 34,
   "h": 29,
-  "axis": "gy"
+  "axis": "gy",
+  "gw": 2,
+  "gd": 1
  },
  "stool2": {
   "w": 12,
   "h": 19,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  },
  "lounge_table2": {
   "w": 20,
   "h": 25,
-  "axis": "sym"
+  "axis": "sym",
+  "gw": 1,
+  "gd": 1
  }
 }
