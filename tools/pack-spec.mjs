@@ -105,4 +105,4 @@ export const CAST = [
   ["pd_stand", "stand"], ["pd_deal", "stand"], ["sv_stand", "stand"], ["sv_tray", "stand"],
 ];
 
-export const THEMES = ["classic", "princess", "neon", "european", "japanese"];
+export const THEMES = ["classic", "princess", "neon", "european", "japanese", "kabukicho"];

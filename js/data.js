@@ -342,6 +342,7 @@ const GAME_DATA = {
     { id: "european", name: "유럽풍", emoji: "🏛️", desc: "고풍스러운 유럽 클래식 인테리어", cost: 9000 },
     { id: "neon", name: "네온 라운지", emoji: "🌃", desc: "화려한 밤의 네온 라운지 스타일", cost: 18000 },
     { id: "japanese", name: "일본풍", emoji: "🏮", desc: "다다미와 제등이 있는 차분한 일본풍 매장", cost: 30000 },
+    { id: "kabukicho", name: "가부키초", emoji: "🌸", desc: "네온 장지벽과 옻칠 바닥의 밤 유흥가 스타일", cost: 50000 },
   ],
   themeUpgrade: {
     baseCost: 1200,

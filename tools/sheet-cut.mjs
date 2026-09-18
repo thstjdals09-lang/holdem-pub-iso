@@ -98,22 +98,77 @@ for (const t of ["princess", "neon", "european", "japanese"]) {
   SHEETS[`theme_${t}_actors`] = { cols: 4, rows: 3, out: `actors_${t}`, items: KIND.actors };
 }
 
-/** 마젠타 배경 → 투명. 색상환에서 자홍 언저리이면서 채도가 높은 픽셀만 지운다. */
-export function keyMagenta(img) {
+/** 마젠타 배경 → 투명.
+ *
+ *  한 번에 넓게 지우면 보라/자주색 **옷**까지 배경으로 먹는다 — 가부키초 테마의
+ *  보라 새틴 드레스가 통째로 사라졌던 것이 그 사례다. 반대로 좁게만 지우면 경계의
+ *  안티에일리어싱 띠가 남아 12칸이 한 덩어리로 이어진다.
+ *
+ *  그래서 두 단계로 나눈다.
+ *   1) 순마젠타(배경)만 좁게 지운다.
+ *   2) 이미 지워진 픽셀에 **닿아 있는** 옅은 마젠타만 몇 px 안쪽까지 따라 들어가며
+ *      지운다. 경계 띠는 1~3px이라 이걸로 사라지고, 그림 한가운데 있는 보라 옷은
+ *      배경에 닿아 있지 않으므로 살아남는다.
+ */
+export function keyMagenta(img, opt = {}) {
   const { width: w, height: h, data } = img;
-  for (let i = 0, n = w * h; i < n; i++) {
-    const o = i * 4;
+  // 경계 띠 두께는 시트 해상도에 비례한다. 원본 2400px에서 12px를 갉아도 28px로
+  // 줄이고 나면 1px이 안 되므로, 넉넉히 잡는 편이 덩어리로 붙는 것보다 낫다.
+  const grow = opt.grow ?? Math.max(4, Math.round(w / 200));
+  const hsv = (o) => {
     const r = data[o] / 255, g = data[o + 1] / 255, b = data[o + 2] / 255;
-    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-    const d = mx - mn;
-    if (d < 0.28 || mx < 0.3) continue;
+    const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+    if (d < 0.12 || mx < 0.2) return null;
     let hue = 0;
     if (mx === r) hue = 60 * (((g - b) / d) % 6);
     else if (mx === g) hue = 60 * ((b - r) / d + 2);
     else hue = 60 * ((r - g) / d + 4);
     if (hue < 0) hue += 360;
-    const sat = d / mx;
-    if (Math.abs(hue - 300) <= 30 && sat >= 0.35) data[o + 3] = 0;
+    return { hue, sat: d / mx, val: mx };
+  };
+
+  // 1) 배경 본체.
+  //    임계값을 상수로 박으면 안 된다 — 시트마다 배경 마젠타가 다르다. 새로 뽑은
+  //    시트는 순마젠타(sat 0.94)지만, 예전 유럽풍 시트는 디더링돼 있어 배경의 절반이
+  //    sat 0.67이다. 0.8로 자르면 그 절반이 남아 12칸이 한 덩어리로 이어진다.
+  //    그래서 **테두리 2px를 실제로 재서** 그 시트의 배경 채도 하한을 구한다.
+  const rim = [];
+  const sampleRim = (x, y) => {
+    const c = hsv((y * w + x) * 4);
+    if (c && Math.abs(c.hue - 300) <= 25 && c.val >= 0.6) rim.push(c.sat);
+  };
+  for (let x = 0; x < w; x++) { sampleRim(x, 0); sampleRim(x, 1); sampleRim(x, h - 1); sampleRim(x, h - 2); }
+  for (let y = 0; y < h; y++) { sampleRim(0, y); sampleRim(1, y); sampleRim(w - 1, y); sampleRim(w - 2, y); }
+  rim.sort((a, b) => a - b);
+  // 5백분위에서 조금 더 내려 잡는다. 테두리에 물건이 걸쳐 있어도 흔들리지 않게.
+  const p5 = rim.length ? rim[Math.floor(rim.length * 0.05)] : 0.8;
+  const satMin = Math.min(0.85, Math.max(0.45, p5 - 0.05));
+  for (let i = 0, n = w * h; i < n; i++) {
+    const o = i * 4;
+    const c = hsv(o);
+    if (c && Math.abs(c.hue - 300) <= 22 && c.sat >= satMin && c.val >= 0.75) data[o + 3] = 0;
+  }
+
+  // 2) 경계 띠 — 지워진 픽셀에 닿은 옅은 마젠타를 grow번 만큼만 따라간다.
+  const loose = (o) => {
+    const c = hsv(o);
+    return c && Math.abs(c.hue - 300) <= 34 && c.sat >= 0.3 && c.val >= 0.3;
+  };
+  for (let pass = 0; pass < grow; pass++) {
+    const hit = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        if (!data[o + 3]) continue;
+        if (!loose(o)) continue;
+        const near =
+          (x > 0 && !data[o - 4 + 3]) || (x < w - 1 && !data[o + 4 + 3]) ||
+          (y > 0 && !data[o - w * 4 + 3]) || (y < h - 1 && !data[o + w * 4 + 3]);
+        if (near) hit.push(o);
+      }
+    }
+    if (!hit.length) break;
+    for (const o of hit) data[o + 3] = 0;
   }
   return img;
 }

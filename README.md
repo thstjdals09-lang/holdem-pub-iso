@@ -3,7 +3,9 @@
 홀덤펍을 운영하는 2D 아이소메트릭 경영 게임. 빌드 도구 없이 `index.html`을 그대로
 열면 돌아간다.
 
-![스크린샷](docs/screenshot.png)
+| 클래식 | 가부키초 |
+|---|---|
+| ![클래식](docs/screenshot.png) | ![가부키초](docs/screenshot-kabukicho.png) |
 
 ## 무엇으로 만들었나
 
@@ -19,7 +21,7 @@ assets/pack/<테마>/    구워진 에셋. 테마 5종이 같은 파일 이름�
 ```
 
 테마 전환은 렌더러가 읽는 **폴더 하나를 바꾸는 것**이 전부다.
-현재 테마: `classic` `japanese` `neon` `european` `princess`.
+현재 테마: `classic` `japanese` `kabukicho` `neon` `european` `princess`.
 
 ## 돌려 보기
 

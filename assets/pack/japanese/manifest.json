@@ -262,7 +262,7 @@
  "armchair_f": {
   "w": 28,
   "h": 28,
-  "axis": "gx"
+  "axis": "sym"
  },
  "armchair_b": {
   "w": 28,

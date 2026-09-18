@@ -132,9 +132,13 @@ for (const theme of THEMES) {
   const refIdx = CAST.findIndex(([nm]) => nm === "a_stand_f");
   const refBox = boxes[refIdx] || boxes[0];
   const k = ACTOR.stand / (refBox.y1 - refBox.y0 + 1);
+  // 서 있는 칸에도 상한을 둔다. 한 배율 원칙은 맞지만, 시트가 한 인물만 눈에 띄게
+  // 크게 그려 오는 일이 있다(가부키초 뒷모습의 손님 B가 다른 사람의 1.6배였다).
+  // 제대로 그려진 칸은 28px 근처라 이 상한(32px)에 걸리지 않는다 — 튄 칸만 잡힌다.
+  const STAND_MAX = Math.round(ACTOR.stand * 1.15);
   CAST.forEach(([name, pose], i) => {
     if (!boxes[i]) return;
-    const out = bake(img, boxes[i], { scale: k, hmax: pose === "sit" ? ACTOR.sit : null });
+    const out = bake(img, boxes[i], { scale: k, hmax: pose === "sit" ? ACTOR.sit : STAND_MAX });
     if (WRITE) writeFileSync(join(actDir, name + ".png"), encodePng(out.w, out.h, out.data));
     made++;
   });
@@ -154,7 +158,7 @@ for (const theme of THEMES) {
     const kb = ACTOR.stand / (rb.y1 - rb.y0 + 1);
     BACK.forEach((name, i) => {
       if (!r.boxes[i]) return;
-      const out = bake(r.img, r.boxes[i], { scale: kb, hmax: /_sit_/.test(name) ? ACTOR.sit : null });
+      const out = bake(r.img, r.boxes[i], { scale: kb, hmax: /_sit_/.test(name) ? ACTOR.sit : STAND_MAX });
       if (WRITE) writeFileSync(join(actDir, name + ".png"), encodePng(out.w, out.h, out.data));
     });
     console.log(`  ${theme}/back     성분 ${String(r.n).padStart(2)} → 12개 (배율 ${kb.toFixed(3)})`);
@@ -171,7 +175,7 @@ for (const theme of THEMES) {
     const km = ACTOR.stand / (rb.y1 - rb.y0 + 1);
     MO.forEach((name, i) => {
       if (!r.boxes[i]) return;
-      const out = bake(r.img, r.boxes[i], { scale: km });
+      const out = bake(r.img, r.boxes[i], { scale: km, hmax: STAND_MAX });
       if (WRITE) writeFileSync(join(actDir, name + ".png"), encodePng(out.w, out.h, out.data));
     });
     console.log(`  ${theme}/staffmo  성분 ${String(r.n).padStart(2)} → 12개`);

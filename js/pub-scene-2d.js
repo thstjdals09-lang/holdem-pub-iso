@@ -91,6 +91,13 @@ const PubScene2D = (() => {
       wall: "#e8dcc0", wallW: "#d6c9ab", wain: "#7d5a3a", beam: "#50381f", stud: "#cbbb98",
       rug: "#8a3a33", rugEdge: "#5c2420", rugTrim: "#d2a95c",
     },
+    // 가부키초 — 검은 옻칠 바닥에 자주/마젠타로 백라이트된 장지벽. 일본풍(온천 여관)과
+    // 같은 모티브를 밤 유흥가 쪽으로 옮긴 테마다.
+    kabukicho: {
+      floorA: "#584047", floorB: "#503940", seam: "#36262b", seamHi: "#775761",
+      wall: "#563a60", wallW: "#482f51", wain: "#2c1d32", beam: "#1a1120", stud: "#6f4c79",
+      rug: "#8e1f3a", rugEdge: "#5a1226", rugTrim: "#e8b44a",
+    },
   };
 
   const PAL = {
