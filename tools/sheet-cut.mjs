@@ -132,21 +132,24 @@ export function keyMagenta(img, opt = {}) {
   //    시트는 순마젠타(sat 0.94)지만, 예전 유럽풍 시트는 디더링돼 있어 배경의 절반이
   //    sat 0.67이다. 0.8로 자르면 그 절반이 남아 12칸이 한 덩어리로 이어진다.
   //    그래서 **테두리 2px를 실제로 재서** 그 시트의 배경 채도 하한을 구한다.
-  const rim = [];
+  const rimS = [], rimV = [];
   const sampleRim = (x, y) => {
     const c = hsv((y * w + x) * 4);
-    if (c && Math.abs(c.hue - 300) <= 25 && c.val >= 0.6) rim.push(c.sat);
+    if (c && Math.abs(c.hue - 300) <= 25) { rimS.push(c.sat); rimV.push(c.val); }
   };
   for (let x = 0; x < w; x++) { sampleRim(x, 0); sampleRim(x, 1); sampleRim(x, h - 1); sampleRim(x, h - 2); }
   for (let y = 0; y < h; y++) { sampleRim(0, y); sampleRim(1, y); sampleRim(w - 1, y); sampleRim(w - 2, y); }
-  rim.sort((a, b) => a - b);
+  rimS.sort((a, b) => a - b); rimV.sort((a, b) => a - b);
   // 5백분위에서 조금 더 내려 잡는다. 테두리에 물건이 걸쳐 있어도 흔들리지 않게.
-  const p5 = rim.length ? rim[Math.floor(rim.length * 0.05)] : 0.8;
-  const satMin = Math.min(0.85, Math.max(0.45, p5 - 0.05));
+  const p5 = (a, d) => (a.length ? a[Math.floor(a.length * 0.05)] : d);
+  const satMin = Math.min(0.85, Math.max(0.45, p5(rimS, 0.8) - 0.05));
+  // 명도도 고정값으로 두면 안 된다 — 공주풍 시트는 배경이 순마젠타가 아니라 **탁한
+  // 분홍**(명도 0.71)이라 0.75로 자르면 배경이 통째로 안 지워지고 12칸이 한 덩어리가 됐다.
+  const valMin = Math.min(0.85, Math.max(0.45, p5(rimV, 0.9) - 0.08));
   for (let i = 0, n = w * h; i < n; i++) {
     const o = i * 4;
     const c = hsv(o);
-    if (c && Math.abs(c.hue - 300) <= 22 && c.sat >= satMin && c.val >= 0.75) data[o + 3] = 0;
+    if (c && Math.abs(c.hue - 300) <= 22 && c.sat >= satMin && c.val >= valMin) data[o + 3] = 0;
   }
 
   // 2) 경계 띠 — 지워진 픽셀에 닿은 옅은 마젠타를 grow번 만큼만 따라간다.
@@ -197,24 +200,34 @@ export function deFringe(img) {
 export function stripGridLines(img) {
   const { width: w, height: h, data } = img;
   const dark = (o) => data[o + 3] > 40 && (data[o] + data[o + 1] + data[o + 2]) / 3 < 70;
+  // 길기만 하면 다 지우면 안 된다 — **어두운 그림**도 길다. 바닥 타일 시트에서 검은
+  // 아스팔트 타일 한 줄이 통째로 "격자선"으로 잡혀 63만 픽셀이 날아갔다.
+  // 격자선은 길면서 **얇다**. 연속된 줄 묶음의 두께가 이 값을 넘으면 그림으로 본다.
+  const maxThick = Math.max(3, Math.round(Math.min(w, h) * 0.012));
   let killed = 0;
-  for (let y = 0; y < h; y++) {
-    let n = 0;
-    for (let x = 0; x < w; x++) if (dark((y * w + x) * 4)) n++;
-    if (n > w * 0.7) {
-      for (let x = 0; x < w; x++) { const o = (y * w + x) * 4; if (dark(o)) { data[o + 3] = 0; killed++; } }
+  /** 조건에 걸린 줄 번호들을 연속 묶음으로 나눠, 얇은 묶음만 지운다. */
+  const sweep = (n, len, isDark, kill) => {
+    const hit = [];
+    for (let i = 0; i < n; i++) {
+      let c = 0;
+      for (let j = 0; j < len; j++) if (isDark(i, j)) c++;
+      if (c > len * 0.7) hit.push(i);
     }
-  }
-  for (let x = 0; x < w; x++) {
-    let n = 0;
-    for (let y = 0; y < h; y++) if (dark((y * w + x) * 4)) n++;
-    if (n > h * 0.7) {
-      for (let y = 0; y < h; y++) { const o = (y * w + x) * 4; if (dark(o)) { data[o + 3] = 0; killed++; } }
+    for (let a = 0; a < hit.length;) {
+      let b = a;
+      while (b + 1 < hit.length && hit[b + 1] === hit[b] + 1) b++;
+      if (b - a + 1 <= maxThick) for (let k = a; k <= b; k++) killed += kill(hit[k], len);
+      a = b + 1;
     }
-  }
+  };
+  sweep(h, w, (y, x) => dark((y * w + x) * 4),
+        (y) => { let c = 0; for (let x = 0; x < w; x++) { const o = (y * w + x) * 4; if (dark(o)) { data[o + 3] = 0; c++; } } return c; });
+  sweep(w, h, (x, y) => dark((y * w + x) * 4),
+        (x) => { let c = 0; for (let y = 0; y < h; y++) { const o = (y * w + x) * 4; if (dark(o)) { data[o + 3] = 0; c++; } } return c; });
   if (killed) console.log(`  격자선 ${killed}픽셀 제거`);
   return img;
 }
+
 
 /** 불투명 픽셀의 연결 성분. 작은 티끌은 버린다. */
 export function components(img, minArea) {
@@ -485,4 +498,25 @@ const write = process.argv.includes("--write");
 const names = !arg || arg === "all" ? Object.keys(SHEETS) : [arg];
 for (const n of names) cutSheet(n, write);
 if (!write) console.log("\n(--write 를 붙여야 실제로 저장한다)");
+}
+
+/** 알파를 n픽셀 깎은 사본. 꼭짓점만 맞닿아 붙은 그림들을 떼어낼 때 쓴다.
+ *  (바닥 타일 시트가 그렇다 — 마름모가 체크무늬로 꼭 맞물려 한 덩어리가 된다) */
+export function erodeAlpha(img, n) {
+  const { width: w, height: h, data } = img;
+  let cur = Buffer.from(data);
+  for (let pass = 0; pass < n; pass++) {
+    const next = Buffer.from(cur);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        if (!cur[o + 3]) continue;
+        const bare =
+          (x === 0 || !cur[o - 4 + 3]) || (x === w - 1 || !cur[o + 4 + 3]) ||
+          (y === 0 || !cur[o - w * 4 + 3]) || (y === h - 1 || !cur[o + w * 4 + 3]);
+        if (bare) next[o + 3] = 0;
+      }
+    cur = next;
+  }
+  return { width: w, height: h, data: cur };
 }

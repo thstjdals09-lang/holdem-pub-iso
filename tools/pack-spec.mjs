@@ -116,3 +116,41 @@ export function cellsOf(name) {
   if (m[1] === 0) return [0, 0];
   return [Math.max(1, Math.round(m[0])), Math.max(1, Math.round(m[1]))];
 }
+
+// ── 벽 조각 · 바닥 타일 ──────────────────────────────────────────────────
+//  이 둘은 "발자국 몇 칸"이 아니라 **화면 규격이 딱 정해져 있다.** 그래서 프롬프트에
+//  픽셀 치수를 그대로 적어 준다.
+//
+//  벽 조각 한 개 = 타일 한 칸의 모서리. 화면에서 이렇게 생겼다(S=1 기준):
+//      가로 16 = TW/2          ← 타일 한 칸을 가는 동안의 화면 가로 이동
+//      바닥선 하강 8 = TH/2    ← 같은 동안의 세로 이동. 기울기가 정확히 1:2다
+//      벽 높이 76 = WALL_H/S
+//      그림 전체 = 16 × 84 (76 + 8)
+//  **기울기 1:2를 못 지키면 조각끼리 계단이 지고 벽이 바닥선에서 떨어진다.**
+//  구운 뒤 tools/_slant.mjs 로 재서 확인한다.
+//
+//  북쪽 벽과 서쪽 벽을 따로 뽑는다. 좌우반전으로 만들면 빨라 보이지만 좌상단 광원이
+//  같이 뒤집혀 두 벽의 명암이 거꾸로 된다.
+export const PANEL = {
+  wall_n_plain:  [16, 84], wall_w_plain:  [16, 84],
+  wall_n_wain:   [16, 84], wall_w_wain:   [16, 84],
+  wall_n_door:   [16, 84], wall_w_door:   [16, 84],
+  wall_n_window: [16, 84], wall_w_window: [16, 84],
+  wall_corner:   [10, 88],          // 두 벽이 만나는 모서리 기둥 — 조금 높다
+  wall_pillar:   [8, 84],           // 벽면 중간 기둥
+  wall_n_half:   [16, 38], wall_w_half: [16, 38],   // 허리벽(앞벽) = FRONT_H/S + 8
+};
+export const PANEL_ORDER = [
+  "wall_n_plain", "wall_w_plain", "wall_n_wain", "wall_w_wain",
+  "wall_n_door", "wall_w_door", "wall_n_window", "wall_w_window",
+  "wall_corner", "wall_pillar", "wall_n_half", "wall_w_half",
+];
+
+//  바닥 타일은 타일 한 칸 그대로 = 32×16 마름모. 한 픽셀만 어긋나도 이어 붙인 자리에
+//  틈이 보이므로 가로세로를 따로 맞춘다(비율을 비틀어서라도 정확히).
+export const FLOOR_ORDER = [
+  "floor_a", "floor_b", "floor_c", "rug_a",
+  "rug_b", "pav_a", "pav_b", "road_a",
+  "road_b", "road_dash", "mat", "lot",
+];
+export const FLOOR_SIZE = [32, 16];

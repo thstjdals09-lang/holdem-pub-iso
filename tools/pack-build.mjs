@@ -18,9 +18,10 @@ import { fileURLToPath } from "node:url";
 import { decodePng, encodePng } from "./_canvas.mjs";
 import {
   keyMagenta, deFringe, stripGridLines, components, mergeNear,
-  cellUnion, gridBoxes, readingOrder, crop, shrink, posterize,
+  cellUnion, gridBoxes, readingOrder, crop, shrink, posterize, erodeAlpha,
 } from "./sheet-cut.mjs";
-import { ACTOR, CAST, THEMES, widthOf, heightOf, cellsOf } from "./pack-spec.mjs";
+import { ACTOR, CAST, THEMES, widthOf, heightOf, cellsOf,
+         PANEL, PANEL_ORDER, FLOOR_ORDER, FLOOR_SIZE } from "./pack-spec.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RAW = join(ROOT, "assets/raw/sheets");
@@ -43,6 +44,12 @@ const PROP_FILE = (theme, kind) =>
     ? { hall: "sheet1_hall", bar: "sheet2_bar", decor: "sheet3_decor", outdoor: "sheet4_outdoor" }[kind]
     : `theme_${theme}_${kind}`;
 
+/** 바닥 시트 전용 — 성분 찾기를 건너뛰고 균등 격자로만 나눈다. (fitTile 주석 참고) */
+function tileCells(file, cols, rows) {
+  const img = deFringe(stripGridLines(keyMagenta(decodePng(readFileSync(file)))));
+  return { img, boxes: readingOrder(gridBoxes(img, cols, rows), rows), n: cols * rows };
+}
+
 /** 시트 한 장을 칸 순서대로 잘라 이미지 배열로 돌려준다. */
 function pieces(file, cols, rows) {
   const img = deFringe(stripGridLines(keyMagenta(decodePng(readFileSync(file)))));
@@ -58,6 +65,21 @@ function pieces(file, cols, rows) {
     if (cand.length < want) break;
     boxes = cand;
   }
+  // 꼭짓점만 맞닿아 한 덩어리가 된 경우(바닥 타일 시트) — 알파를 깎아 떼어내고
+  // 찾은 박스를 다시 그만큼 넓힌다. 격자 균등분할보다 훨씬 정확하다.
+  if (boxes.length < want) {
+    for (const n of [2, 4, 7]) {
+      const er = components(erodeAlpha(img, n), minArea);
+      const cand = mergeNear(er, Math.round(img.width * 0.004)).filter((b) => (b.x1 - b.x0) > 8 && (b.y1 - b.y0) > 8);
+      if (cand.length === want) {
+        boxes = cand.map((b) => ({
+          x0: Math.max(0, b.x0 - n), y0: Math.max(0, b.y0 - n),
+          x1: Math.min(img.width - 1, b.x1 + n), y1: Math.min(img.height - 1, b.y1 + n),
+        }));
+        break;
+      }
+    }
+  }
   let ordered;
   if (boxes.length === want) ordered = readingOrder(boxes, rows);
   else if (boxes.length > want) {
@@ -67,9 +89,129 @@ function pieces(file, cols, rows) {
   return { img, boxes: ordered, n: boxes.length };
 }
 
+/** 박스 안에서 실제로 그려진 부분까지 박스를 조인다.
+ *  성분 찾기가 실패해 격자 균등분할로 떨어졌을 때, 박스가 칸 전체(마젠타 여백 포함)라
+ *  "윗면만 자르기" 같은 계산이 어긋난다. 그 전에 한 번 조여 준다. */
+function tighten(img, box) {
+  const { width: W, data } = img;
+  let x0 = box.x1, x1 = box.x0, y0 = box.y1, y1 = box.y0;
+  for (let y = box.y0; y <= box.y1; y++)
+    for (let x = box.x0; x <= box.x1; x++)
+      if (data[(y * W + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+  return x1 >= x0 && y1 >= y0 ? { x0, x1, y0, y1 } : box;
+}
+
+/** 바닥 타일 — 마름모 **윗면만** 잘라 32×16 으로.
+ *
+ *  바닥 시트는 성분 찾기를 안 쓴다. 마름모가 체크무늬로 꼭 맞물려 꼭짓점끼리 닿기
+ *  때문에 무엇을 해도 한 덩어리로 묶인다(알파를 8px 깎아도 안 떨어졌다).
+ *  대신 **타일이 칸을 꽉 채운다**는 성질을 쓴다 — 균등 격자로 나누면 칸 폭이 곧
+ *  타일 폭이다. 남은 문제는 세로 위치뿐이고, 그건 칸 안쪽에서 **가장 넓은 행**(마름모의
+ *  긴 대각선)을 찾으면 된다. 이웃의 꼭짓점이 칸 가장자리에 걸치므로 안쪽으로 조금
+ *  들어가서 찾는다. 윗면은 거기서 위아래로 각각 폭의 1/4 이다(2:1 마름모니까).
+ *  이러면 모델이 두께를 그리든 안 그리든 결과가 같다.
+ */
+function fitTile(img, box, w, h) {
+  const { width: W, data } = img;
+  const bw = box.x1 - box.x0 + 1, bh = box.y1 - box.y0 + 1;
+  const ix0 = box.x0 + Math.round(bw * 0.18), ix1 = box.x1 - Math.round(bw * 0.18);
+  const iy0 = box.y0 + Math.round(bh * 0.05), iy1 = box.y1 - Math.round(bh * 0.05);
+  let ym = Math.round((box.y0 + box.y1) / 2), best = -1;
+  for (let y = iy0; y <= iy1; y++) {
+    let c = 0;
+    for (let x = ix0; x <= ix1; x++) if (data[(y * W + x) * 4 + 3] > 8) c++;
+    if (c > best) { best = c; ym = y; }
+  }
+  const half = Math.round(bw / 4);
+  const top = { x0: box.x0, x1: box.x1, y0: Math.max(0, ym - half), y1: Math.min(img.height - 1, ym + half) };
+  return { ...fillDiamond(posterize(shrink(crop(img, top), w, h), 12)), w, h };
+}
+
+/** 마름모 꼭짓점을 메운다.
+ *  축소할 때 덮인 면적이 42%에 못 미치는 픽셀은 버린다(작은 크기에서 테두리가
+ *  지저분해지는 걸 막는 규칙이다). 그런데 마름모의 위·아래 꼭짓점이 딱 그렇게 생겨서,
+ *  타일을 이어 붙이면 그 자리에 바늘구멍 같은 틈이 줄줄이 난다.
+ *  이상적인 마름모 안쪽인데 비어 있는 칸은 같은 줄에서 가장 가까운 색으로 채운다. */
+function fillDiamond(img) {
+  const { width: w, height: h, data } = img;
+  const cx = (w - 1) / 2, cy = (h - 1) / 2;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      if (data[o + 3]) continue;
+      if (Math.abs(x - cx) / (w / 2) + Math.abs(y - cy) / (h / 2) > 1.0) continue;   // 마름모 밖
+      let src = -1;
+      for (let d = 1; d < w && src < 0; d++) {
+        if (x - d >= 0 && data[(y * w + x - d) * 4 + 3]) src = (y * w + x - d) * 4;
+        else if (x + d < w && data[(y * w + x + d) * 4 + 3]) src = (y * w + x + d) * 4;
+      }
+      for (let d = 1; d < h && src < 0; d++) {
+        if (y - d >= 0 && data[((y - d) * w + x) * 4 + 3]) src = ((y - d) * w + x) * 4;
+        else if (y + d < h && data[((y + d) * w + x) * 4 + 3]) src = ((y + d) * w + x) * 4;
+      }
+      if (src < 0) continue;
+      data[o] = data[src]; data[o + 1] = data[src + 1]; data[o + 2] = data[src + 2]; data[o + 3] = 255;
+    }
+  }
+  return img;
+}
+
+/** 벽 조각을 격자 기울기에 **강제로** 맞춘다.
+ *
+ *  생성물의 기울기를 믿지 않는다. 조각이 이어 붙으려면 바닥선이 정확히 1:2로
+ *  내려가야 하는데(가로 16px 가는 동안 8px), 모델이 26.57°를 픽셀 단위로 지킬
+ *  이유가 없다. 1px만 틀려도 조각 사이에 계단이 지고 벽이 바닥선에서 떨어진다.
+ *
+ *  그래서 **열마다** 그림의 위·아래 끝을 찾아, 계산해 둔 자리로 늘린다.
+ *  모델이 그린 명암·두께·질감은 그대로 살고 실루엣만 격자에 맞는다.
+ *    dir +1 = 북쪽 벽(오른쪽으로 갈수록 바닥이 내려간다)
+ *    dir -1 = 서쪽 벽(오른쪽으로 갈수록 올라간다)
+ */
+function fitSlab(img, box, w, h, drop, dir) {
+  const base = shrink(crop(img, box), w, h);
+  const out = Buffer.alloc(w * h * 4);
+  const bodyH = h - drop;                       // 벽면 자체의 높이
+  for (let x = 0; x < w; x++) {
+    let y0 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) if (base.data[(y * w + x) * 4 + 3] > 8) { if (y0 < 0) y0 = y; y1 = y; }
+    if (y0 < 0) continue;
+    const step = Math.round((drop * x) / (w - 1));
+    const bot = dir > 0 ? h - 1 - drop + step : h - 1 - step;
+    const top = bot - bodyH + 1;
+    const span = y1 - y0 + 1;
+    for (let y = top; y <= bot; y++) {
+      if (y < 0 || y >= h) continue;
+      const sy = y0 + Math.min(span - 1, Math.floor(((y - top) * span) / bodyH));
+      const si = (sy * w + x) * 4, di = (y * w + x) * 4;
+      if (base.data[si + 3] < 8) continue;      // 문·창의 뚫린 구멍은 뚫린 채로 둔다
+      out[di] = base.data[si]; out[di + 1] = base.data[si + 1];
+      out[di + 2] = base.data[si + 2]; out[di + 3] = 255;
+    }
+  }
+  // 양 끝 열을 이웃 열로 덮는다. "가장자리에 선을 긋지 말라"고 해도 원본에는 은은한
+  // 외곽선이 남고, 조각을 이어 붙이면 그게 이음매마다 세로줄로 보인다.
+  for (let y = 0; y < h; y++) {
+    const cp = (dst, src) => {
+      const d = (y * w + dst) * 4, s2 = (y * w + src) * 4;
+      out[d] = out[s2]; out[d + 1] = out[s2 + 1]; out[d + 2] = out[s2 + 2]; out[d + 3] = out[s2 + 3];
+    };
+    cp(0, 2); cp(1, 2); cp(w - 1, w - 3); cp(w - 2, w - 3);
+  }
+  return { ...posterize({ width: w, height: h, data: out }, 12), w, h };
+}
+
 /** 목표 폭(또는 키)에 맞춰 줄이고 색을 평탄화한다. */
-function bake(img, box, { width, height, hmax, scale }) {
+function bake(img, box, { width, height, hmax, scale, fit }) {
   let piece = crop(img, box);
+  // fit = [w, h] — 비율을 비틀어서라도 정확히 그 크기로. 벽 조각과 바닥 타일은
+  // 한 픽셀만 어긋나도 이어 붙인 자리에 틈이나 계단이 보인다.
+  if (fit) {
+    const [fw, fh] = fit;
+    return { ...posterize(shrink(piece, fw, fh), 12), w: fw, h: fh };
+  }
   let k = scale || (width ? width / piece.width : height / piece.height);
   // 폭으로 맞췄는데 세로가 상한을 넘으면 세로 기준으로 다시 잡는다
   if (hmax && piece.height * k > hmax) k = hmax / piece.height;
@@ -203,6 +345,37 @@ for (const theme of THEMES) {
     });
     console.log(`  ${theme}/seat     성분 ${String(r.n).padStart(2)} → 12개`);
   }
+  // ── 벽 조각 시트 ── 화면 규격이 정해져 있으므로 정확히 그 크기로 굽는다.
+  const wallFile = join(RAW, "wall", theme + ".png");
+  if (existsSync(wallFile)) {
+    const r = pieces(wallFile, 4, 3);
+    PANEL_ORDER.forEach((name, i) => {
+      if (!r.boxes[i]) return;
+      const [pw, ph] = PANEL[name];
+      // 기둥·몰딩은 벽면이 아니라 덧대는 것이라 기울기를 강제하지 않는다
+      const slanted = /^wall_[nw]_/.test(name);
+      const out = slanted
+        ? fitSlab(r.img, r.boxes[i], pw, ph, 8, name.startsWith("wall_n_") ? 1 : -1)
+        : bake(r.img, r.boxes[i], { fit: PANEL[name] });
+      manifest[name] = { w: out.w, h: out.h, gw: 0, gd: 0 };
+      if (WRITE) writeFileSync(join(propDir, name + ".png"), encodePng(out.w, out.h, out.data));
+    });
+    console.log(`  ${theme}/wall     성분 ${String(r.n).padStart(2)} → 12개`);
+  }
+
+  // ── 바닥 타일 시트 ──
+  const floorFile = join(RAW, "floor", theme + ".png");
+  if (existsSync(floorFile)) {
+    const r = tileCells(floorFile, 4, 3);
+    FLOOR_ORDER.forEach((name, i) => {
+      if (!r.boxes[i]) return;
+      const out = fitTile(r.img, r.boxes[i], FLOOR_SIZE[0], FLOOR_SIZE[1]);
+      manifest[name] = { w: out.w, h: out.h, gw: 0, gd: 0 };
+      if (WRITE) writeFileSync(join(propDir, name + ".png"), encodePng(out.w, out.h, out.data));
+    });
+    console.log(`  ${theme}/floor    성분 ${String(r.n).padStart(2)} → 12개`);
+  }
+
   if (WRITE) writeFileSync(join(ROOT, "assets/pack", theme, "manifest.json"), JSON.stringify(manifest, null, 1));
 }
 

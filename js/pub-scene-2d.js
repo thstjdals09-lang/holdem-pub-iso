@@ -48,6 +48,12 @@ const PubScene2D = (() => {
     // 좌석 방향 세트 — 앞/뒤 두 장을 좌우반전해 4방향을 만든다
     "chair_f", "chair_b", "dealer_chair_f", "dealer_chair_b",
     "armchair_f", "armchair_b", "sofa_f", "sofa_b", "bench_f", "bench_b"];
+  // 벽 조각과 바닥 타일 — 테마마다 따로 붙는다. 없으면 코드로 그리던 예전 모습으로 떨어진다.
+  const PANELS = ["wall_n_plain", "wall_w_plain", "wall_n_wain", "wall_w_wain",
+    "wall_n_door", "wall_w_door", "wall_n_window", "wall_w_window",
+    "wall_corner", "wall_pillar", "wall_n_half", "wall_w_half"];
+  const TILES = ["floor_a", "floor_b", "floor_c", "rug_a", "rug_b", "pav_a", "pav_b",
+    "road_a", "road_b", "road_dash", "mat", "lot"];
   // 사람: 앞/뒤 2장을 좌우반전해 4방향을 만든다. 걷기는 4프레임 사이클.
   const ACTORS = [
     "a_walk_f1", "a_walk_f2", "a_walk_f3", "a_walk_f4",
@@ -61,6 +67,8 @@ const PubScene2D = (() => {
     "sv_walk_b1", "sv_walk_b2", "sv_walk_b3", "sv_walk_b4"];
   const SRC = {};
   for (const k of PROPS) SRC[k] = "props/" + k + ".png";
+  for (const k of PANELS) SRC[k] = "props/" + k + ".png";
+  for (const k of TILES) SRC[k] = "props/" + k + ".png";
   for (const k of ACTORS) SRC[k] = "actors/" + k + ".png";
 
   // 테마는 바닥·벽·러그 색만 바꾼다. 가구 도트 에셋은 색을 갈아입히면 명암 관계가
@@ -134,6 +142,14 @@ const PubScene2D = (() => {
   function A(key) {
     const bank = SETS[theme];
     return (bank && bank[key]) || IMG[key] || null;
+  }
+  /** 지금 테마가 **직접 가진** 것만. 기본 세트로 떨어지지 않는다.
+   *  벽과 바닥은 테마의 얼굴이다 — 공주풍 매장에 클래식 나무벽이 붙으면 안 뽙는 것만 못하다.
+   *  그 테마에 아직 시트가 없으면 코드로 칠하던 예전 방식으로 떨어진다. */
+  function Aown(key) {
+    if (!key) return null;
+    const bank = SETS[theme];
+    return (bank && bank[key]) || null;
   }
   function loadAll() {
     return loadSet("classic").then((bank) => { Object.assign(IMG, bank); loaded = true; });
@@ -237,6 +253,29 @@ const PubScene2D = (() => {
     if (!im) return;
     const wantAxis = dir > 0 ? "gx" : "gy";
     blit(key, cx, cy + (im.height * S) / 2, a !== wantAxis);
+  }
+
+  /** 벽 조각 한 장을 제 모서리에 놓는다.
+   *  기울기(1:2)는 **굽는 단계에서 강제로 박아 두었으므로** 여기서는 기울일 필요가 없다 —
+   *  왼쪽 끝과 아래쪽 끝만 맞추면 조각끼리 딱 이어진다.
+   *    dir +1 = 북쪽 벽: 왼쪽 끝 (g,0), 가장 아래 (g+1,0)
+   *    dir -1 = 서쪽 벽: 왼쪽 끝도 가장 아래도 (0,g+1)
+   *  에셋이 없으면 false 를 돌려주고, 부르는 쪽이 코드로 그리던 옛 모습으로 떨어진다. */
+  function wallPanel(key, g, dir, opt) {
+    const im = Aown(key);
+    if (!im) return false;
+    const o = opt || {};
+    const base = o.base || 0;
+    // 조각의 왼쪽 끝. 북쪽(+gx)은 g 쪽이, 서쪽(+gy)은 g+1 쪽이 화면 왼쪽이다.
+    const ax = dir > 0 ? sx(g, base) : sx(base, g + 1);
+    // 뒷벽은 기준선 **위로** 올라가므로 아래 끝을 맞추고, 앞벽(허리벽)은 기준선
+    // **아래로** 내려가므로 위 끝을 맞춘다.
+    const lo = dir > 0 ? sy(g + 1, base) : sy(base, g + 1);      // 두 끝점 중 아래쪽
+    const hi = dir > 0 ? sy(g, base) : sy(base, g);              // 위쪽
+    const top = o.down ? Math.round(hi) : Math.round(lo) - im.height * S;
+    ctx.drawImage(im, 0, 0, im.width, im.height,
+      Math.round(ax), top, im.width * S, im.height * S);
+    return true;
   }
 
   /** 아이소 박스. 소파·낮은 벽 같은 건 에셋보다 코드가 정확하다. */
@@ -674,6 +713,12 @@ const PubScene2D = (() => {
     //  이걸 할 수 없었다.
     const wallsN = Array.from({ length: W }, () => "wall");
     const wallsW = Array.from({ length: D }, () => "wall");
+    // 창을 낸다. 간판(g≈3.4, 좌우 1.1칸)과 액자(5.2부터 1.7칸 간격)를 피한 자리.
+    // 조각 종류만 바꾸면 되는 일이라, 통판으로 그리던 때는 할 수 없었다.
+    const win = (arr, g) => { if (g >= 0 && g < arr.length) arr[g] = "window"; };
+    win(wallsN, 1);
+    win(wallsN, W - 3);
+    if (!bar && D > 6) win(wallsW, D - 3);      // 서쪽 벽은 바가 없을 때만
 
     // ── 벽 장식 ──
     const decor = s.decor || {};
@@ -753,6 +798,13 @@ const PubScene2D = (() => {
     return "lot";
   }
 
+  // 지형 종류 → 타일 두 장(칸이 체크무늬로 번갈아 깔린다)
+  const TILE_OF = {
+    // 실내 바닥만 두 장을 번갈아 깐다. 바깥은 한 장으로 — 모델이 "한 톤 어둡게"를
+    // 크게 잡아서 번갈아 깔면 도로가 지붕 기왓장처럼 보인다.
+    floor: ["floor_a", "floor_b"], pav: ["pav_a", "pav_a"],
+    road: ["road_a", "road_a"], lot: ["lot", "lot"],
+  };
   function drawGround() {
     const T = THEMES[theme] || THEMES.classic;
     R(0, 0, VW, VH, PAL.roadB);
@@ -768,6 +820,13 @@ const PubScene2D = (() => {
         const kind = terrain(gx, gy);
         const even = ((gx + gy) & 1) === 0;
         const quad = [[px, py], [px + TW / 2, py - TH / 2], [px, py - TH], [px - TW / 2, py - TH / 2]];
+        // 타일 에셋이 있으면 그걸로. 마름모 하나가 곧 한 칸이라 자리만 맞추면 된다.
+        const tile = Aown(TILE_OF[kind] ? TILE_OF[kind][even ? 0 : 1] : null);
+        if (tile) {
+          ctx.drawImage(tile, 0, 0, tile.width, tile.height,
+            Math.round(px - TW / 2), Math.round(py - TH), TW, TH);
+          continue;
+        }
         if (kind === "floor") {
           poly(quad, even ? T.floorA : T.floorB);
           line(px - TW / 2, py - TH / 2, px, py - TH, T.seam);
@@ -826,26 +885,50 @@ const PubScene2D = (() => {
       }
       poly([At, Bt, [B[0], B[1] - WALL_H + 5 * S], [A[0], A[1] - WALL_H + 5 * S]], T.beam);
     };
+    /** 기둥 에셋. 조각 경계에 세로로 덧댄다. 없으면 false → 코드로 그린다. */
+    const pillar = (gx, gy, dir) => {
+      const im = Aown("wall_pillar");
+      if (!im) return false;
+      ctx.drawImage(im, 0, 0, im.width, im.height,
+        Math.round(sx(gx, gy) - (dir > 0 ? 0 : im.width * S)), Math.round(sy(gx, gy)) - im.height * S,
+        im.width * S, im.height * S);
+      return true;
+    };
     /** 기둥 — 3칸마다. 조각에 딸린 장식이라 조각과 같이 그린다. */
     const stud = (gx, gy, dir) => {
       const x = sx(gx, gy), y = sy(gx, gy);
       const dy = 1.5 * S * dir;
       poly([[x, y], [x + 3 * S, y + dy], [x + 3 * S, y + dy - WALL_H], [x, y - WALL_H]], T.stud);
     };
+    // 조각 종류 → 에셋 이름. 기본은 징두리 있는 벽(코드로 칠하던 모습과 같은 구성).
+    const KEY = { wall: "wain", door: "door", window: "window" };
+    const panel = (g, dir, kind) => {
+      if (kind === "open") return true;                  // 구멍은 아무것도 안 그린다
+      const k = KEY[kind];
+      return k ? wallPanel((dir > 0 ? "wall_n_" : "wall_w_") + k, g, dir) : false;
+    };
     for (let g = 0; g < ROOM.w; g++) {
       const kind = L.wallsN[g] || "wall";
       add(g - 0.5, () => {
-        seg(g, 0, g + 1, 0, T.wall, kind);
-        if (g >= 2 && g % 3 === 2) stud(g, 0, 1);
+        if (!panel(g, 1, kind)) seg(g, 0, g + 1, 0, T.wall, kind);
+        if (g >= 2 && g % 3 === 2 && !pillar(g, 0, 1)) stud(g, 0, 1);
       });
     }
     for (let g = 0; g < ROOM.d; g++) {
       const kind = L.wallsW[g] || "wall";
       add(g - 0.5, () => {
-        seg(0, g, 0, g + 1, T.wallW, kind);
-        if (g >= 2 && g % 3 === 2) stud(0, g, -1);
+        if (!panel(g, -1, kind)) seg(0, g, 0, g + 1, T.wallW, kind);
+        if (g >= 2 && g % 3 === 2 && !pillar(0, g, -1)) stud(0, g, -1);
       });
     }
+    // 두 벽이 만나는 모서리 기둥 — 이음매를 가려 준다
+    add(-0.6, () => {
+      const im = Aown("wall_corner");
+      if (!im) return;
+      ctx.drawImage(im, 0, 0, im.width, im.height,
+        Math.round(sx(0, 0) - (im.width * S) / 2), Math.round(sy(0, 0)) - im.height * S,
+        im.width * S, im.height * S);
+    });
   }
 
   /** 가게 간판 — 글자는 이미지가 아니라 코드로 찍는다. */
@@ -903,11 +986,15 @@ const PubScene2D = (() => {
     const onRight = L.entrance.gx >= ROOM.w;
     for (let g = 0; g < ROOM.w; g++) {
       if (!onRight && g >= L.entrance.gx - 1 && g <= L.entrance.gx) continue;
-      add(g + ROOM.d + 0.55, () => seg(g, ROOM.d, g + 1, ROOM.d));
+      add(g + ROOM.d + 0.55, () => {
+        if (!wallPanel("wall_n_half", g, 1, { base: ROOM.d, down: true })) seg(g, ROOM.d, g + 1, ROOM.d);
+      });
     }
     for (let g = 0; g < ROOM.d; g++) {
       if (onRight && g >= L.entrance.gy - 1 && g <= L.entrance.gy) continue;
-      add(ROOM.w + g + 0.55, () => seg(ROOM.w, g + 1, ROOM.w, g));
+      add(ROOM.w + g + 0.55, () => {
+        if (!wallPanel("wall_w_half", g, -1, { base: ROOM.w, down: true })) seg(ROOM.w, g + 1, ROOM.w, g);
+      });
     }
   }
 

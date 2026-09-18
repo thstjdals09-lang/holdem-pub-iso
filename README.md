@@ -17,10 +17,12 @@ js/pub-scene-2d.js     아이소메트릭 렌더러 (타일 32×16, 화면에는
 js/game.js, data.js    경제 · 업그레이드 · 딜러 로직
 tools/pack-build.mjs   생성 시트를 잘라 게임 에셋으로 굽는다
 tools/pack-spec.mjs    모든 에셋의 크기를 정하는 기준표 (실제 치수 m 단위)
+tools/PROMPTS.md       시트 10장의 칸 순서와 생성 프롬프트 규칙
 assets/pack/<테마>/    구워진 에셋. 테마 5종이 같은 파일 이름을 쓴다
 ```
 
-테마 전환은 렌더러가 읽는 **폴더 하나를 바꾸는 것**이 전부다.
+테마 전환은 렌더러가 읽는 **폴더 하나를 바꾸는 것**이 전부다. 가구·사람뿐 아니라
+**벽 조각과 바닥 타일까지** 테마마다 따로 있다.
 현재 테마: `classic` `japanese` `kabukicho` `neon` `european` `princess`.
 
 ## 돌려 보기
@@ -30,7 +32,11 @@ assets/pack/<테마>/    구워진 에셋. 테마 5종이 같은 파일 이름�
 npx serve .          # 또는 python -m http.server
 
 # 브라우저 없이 한 프레임 렌더해서 확인 (에셋 로드 · 배치 · 탭 판정까지 검사)
-node tools/scene2d-preview.mjs 6 0.8     # → tools/_preview/scene2d.png
+node tools/scene2d-preview.mjs 6 0.8 classic   # → tools/_preview/scene2d.png
+
+# 에셋 이음매 확인
+node tools/_wallcheck.mjs classic        # 벽 조각을 이어 붙여 본다
+node tools/_tilecheck.mjs classic        # 바닥 타일을 2×2로 깔아 본다
 
 # 새 테마 굽기
 node tools/pack-build.mjs <테마> --write
