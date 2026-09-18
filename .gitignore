@@ -1,0 +1,9 @@
+.DS_Store
+Thumbs.db
+node_modules/
+
+# 생성 원본 시트 — 구워진 assets/pack/ 만 커밋한다. tools/pack-build.mjs 로 다시 만든다.
+assets/raw/
+
+# 미리보기 출력
+tools/_preview/
