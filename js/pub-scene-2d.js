@@ -164,7 +164,7 @@ const PubScene2D = (() => {
   let snap = null, layout = null;
   let bubbles = [], chips = [], hits = [];
   let raf = 0;
-  const api = { onTap: null, onDiamondBubble: null };
+  const api = { onTap: null, onDiamondBubble: null, onEditMode: null };
 
   // 카메라 — 손가락으로 끌면 화면이 따라 움직인다. 방이 화면보다 넓으므로 필수다.
   let camX = 0, camY = 0;
@@ -337,6 +337,48 @@ const PubScene2D = (() => {
     }
   }
 
+  // ---------------- 배치 모드 ----------------
+  //  동물의숲처럼 기물을 집어서 옮긴다. 옮긴 자리는 place 에 남고, 의자와 손님은
+  //  테이블에서 파생되므로 테이블만 옮기면 알아서 따라간다.
+  const edit = {
+    on: false,
+    hold: null,       // 지금 끌고 있는 것 { id, gw, gd, rot, cx, cy, ok }
+    hits: [],         // 이번 프레임에 그린 "집을 수 있는 것"들의 화면 사각형
+    btns: [],         // 상단 버튼들
+  };
+  /** 화면 좌표 → 격자 좌표. sx/sy 의 역변환이다. */
+  function toGrid(px, py) {
+    const dx = (px - OX - camX) / (TW / 2);     // gx - gy
+    const dy = (py - OY - camY) / (TH / 2);     // gx + gy
+    return [(dy + dx) / 2, (dy - dx) / 2];
+  }
+  /** 반 칸 단위로 붙인다 — 칸에 딱 맞으면서 두 칸짜리 물건도 가운데를 잡을 수 있다. */
+  const snapHalf = (v) => Math.round(v * 2) / 2;
+
+  // ---------------- 플레이어가 옮긴 자리 ----------------
+  //  기본 자리는 코드가 정하고, 플레이어가 옮긴 것만 여기에 덮어쓴다.
+  //  { "table:0": {cx, cy}, "sofa:1": {cx, cy, rot}, ... }
+  //  게임 세이브(game.js)는 건드리지 않는다 — 화면 배치는 렌더러의 몫이다.
+  const PLACE_KEY = "hpi.place.v1";
+  // 지금 손에 들고 있는 물건의 id. 이것만 점유 격자에서 뺀다 — 안 그러면 자기 자신과
+  // 부딪혀서 제자리에 도로 놓을 수 없다.
+  let editSkip = null;
+  let place = {};
+  function loadPlace() {
+    try { place = JSON.parse(localStorage.getItem(PLACE_KEY)) || {}; } catch (e) { place = {}; }
+  }
+  function savePlace() {
+    try { localStorage.setItem(PLACE_KEY, JSON.stringify(place)); } catch (e) {}
+  }
+  /** 기본 자리에 플레이어가 옮긴 값을 덮어쓴다. */
+  function placed(id, cx, cy, rot) {
+    const p = place[id];
+    return p ? { id, cx: p.cx, cy: p.cy, rot: p.rot === undefined ? (rot || 0) : p.rot }
+             : { id, cx, cy, rot: rot || 0 };
+  }
+  /** 방향 0~3 → 격자 방향 벡터. 0 = +gx(오른쪽 아래), 시계 방향. */
+  const DIRV = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
   // ---------------- 배치 ----------------
   // 테이블은 "대표 3~4개"만 크게 보여준다. 게임이 그 이상을 들고 있어도 화면은
   // 4개까지만 그리고, 나머지 성장은 손님 수·직원·소품·바 레벨로 드러낸다.
@@ -363,7 +405,10 @@ const PubScene2D = (() => {
   const WHO = ["a", "b", "c"];
   const EMOTE = ["spade", "heart", "note"];
   // 6등분하면 딜러 자리(-90)와 손님 자리가 겹친다. 손님은 5자리, -90은 딜러 몫.
-  const SEAT_ANGLE = [-30, 30, 90, 150, 210];
+  // **순서는 카메라에 가까운 자리부터**다. 손님이 자리를 다 못 채울 때 뒤쪽부터 차면
+  // 정작 보이는 앞자리가 비어 "빈 의자만 늘어선" 그림이 된다.
+  // 90 = 정면 아래, 150/30 = 앞 좌우, 210/-30 = 뒤 좌우.
+  const SEAT_ANGLE = [90, 150, 30, 210, -30];
   // 좌석은 **화면 좌표 타원**으로 잡는다. 격자에서 원을 그리면 화면에서는 대각선으로
   // 늘어난 타원이 되어, 위쪽 자리가 테이블에 파묻히고 옆자리는 너무 멀어진다.
   // 테이블 그림이 화면에서 128×96 이므로 그보다 한 바퀴 큰 타원에 앉힌다.
@@ -381,7 +426,11 @@ const PubScene2D = (() => {
    *  아이소에서는 화면 타원(가로:세로 = 2:1)이 곧 바닥의 원이다. */
   function seatAt(cx, cy, deg, k) {
     const a = (deg * Math.PI) / 180;
-    const rx = seatRX() * k;
+    // 테이블 **뒤쪽** 자리는 조금 더 물린다. 앞뒤 자리를 같은 반지름에 두면, 뒷사람은
+    // 테이블 뒷테두리에 가려 머리만 나오거나 통째로 사라진다(아이소에서 뒤 = 위쪽이라
+    // 테이블이 나중에 그려져 덮는다). 앞자리는 가까울수록 테이블에 붙어 보여 좋다.
+    const back = Math.sin(a) < 0 ? 1.22 : 1;
+    const rx = seatRX() * k * back;
     const ox = rx * Math.cos(a), oy = (rx / 2) * Math.sin(a);
     const diff = ox / (TW / 2), sum = oy / (TH / 2);
     return [cx + (sum + diff) / 2, cy + (sum - diff) / 2];
@@ -429,7 +478,17 @@ const PubScene2D = (() => {
     } else {
       sprite = n.who + "_" + (n.mode === "sit" ? "sit" : "stand") + "_" + (f.back ? "b" : "f");
     }
-    return { gx, gy, sprite, flip: f.flip, bob };
+    // 앉은 사람은 **의자와 같은 접지선**을 써야 한다. 물건은 그림 바닥을 발자국의 남쪽
+    // 꼭짓점(중심에서 아래로 폭/4)에 맞추는데, 사람만 격자점에 맞추고 있었다. 그래서
+    // 같은 자리인데도 의자가 7px쯤 아래로 어긋나 "빈 의자 옆에 사람이 떠 있는" 모습이 됐다.
+    // 앉은 칸만 의자 규칙으로 맞추고, 엉덩이가 좌면에 닿게 조금 올린다.
+    const sit = n.mode === "sit" || n.seat;
+    let drop = 0;
+    if (sit) {
+      const ch = A("chair");
+      if (ch) drop = (ch.width * S) / 4;
+    }
+    return { gx, gy, sprite, flip: f.flip, bob, drop };
   }
 
   // ---------------- 점유 격자 ----------------
@@ -552,7 +611,7 @@ const PubScene2D = (() => {
     OY = Math.round(VH * 0.25) + WALL_H;
 
     const W = ROOM.w, D = ROOM.d;
-    const slots = plan.t.map((p, i) => ({ i, cx: p[0], cy: p[1], owned: i < owned }));
+    const slots = plan.t.map((p, i) => ({ i, ...placed("table:" + i, p[0], p[1]), owned: i < owned }));
     // 자리를 다 채웠는데 증설 여지가 남으면 라운지 쪽에 "빈 자리" 표식을 둔다
     const expand = owned >= shown && owned < capacity ? { cx: W - 2.4, cy: D - 3.6 } : null;
 
@@ -577,15 +636,23 @@ const PubScene2D = (() => {
       ? [[D - 3.0, D - 1.6], [D - 0.4, D - 1.5], [D - 5.4, D - 1.5]]
       : narrow ? [[7.6, 10.8], [10.2, 11.6], [5.0, 10.0]]
                : [[6.0, 11.2], [10.6, 11.4], [8.3, 9.2]];
-    for (let i = 0; i < Math.min(boothN, spots.length); i++) booths.push(spots[i]);
+    // 소파는 **방향**을 갖는다. 기본은 +gx(홀 안쪽·카메라 쪽)를 보게 —
+    // 앞벽을 등지게 두면 등받이만 보여 앉은 손님이 통째로 가려진다.
+    for (let i = 0; i < Math.min(boothN, spots.length); i++) {
+      booths.push(placed("sofa:" + i, spots[i][0], spots[i][1], 0));
+    }
 
     // ── 입구 · 대회 데스크 (사람 배치가 이 자리를 피해야 해서 먼저 정한다) ──
     const entrance = { gx: W, gy: Math.round(D * 0.78) };
-    const host = s.tournamentWins > 0 ? { cx: W - 1.1, cy: D - 1.6 } : null;
+    const host = s.tournamentWins > 0 ? placed("host", W - 1.1, D - 1.6) : null;
 
     // ── 화분 · 소품 ──
     const props = [];
-    const P = (a, cx, cy, axis) => props.push({ a, cx, cy, axis: axis || "gx" });
+    const seen = {};
+    const P = (a, cx, cy, axis) => {
+      const n = (seen[a] = (seen[a] || 0) + 1) - 1;
+      props.push({ a, axis: axis || "gx", ...placed("prop:" + a + ":" + n, cx, cy) });
+    };
     P("palm", 7.0, 0.6); P("palm", 0.6, 0.6); P("palm", W - 0.6, D - 0.7);
     const plantLv = (s.decor && s.decor.plant) || 0;
     // 세 번째 값 = 좌우반전 여부 (세로줄에 놓는 것은 원본, 가로줄은 반전)
@@ -596,23 +663,30 @@ const PubScene2D = (() => {
       P("flower_bed", sp[0], sp[1], sp[2]);
     }
     // 냉장고는 바 끝에 붙인다(오른쪽 벽은 화면 밖이다)
-    if ((s.fixtures && s.fixtures.fridge) > 0) props.push({ a: "fridge", cx: 1.3, cy: 6.9, fixture: "fridge" });
+    if ((s.fixtures && s.fixtures.fridge) > 0) props.push({ a: "fridge", fixture: "fridge", ...placed("prop:fridge:0", 1.3, 6.9) });
 
     // ── 점유 격자 ── 가구가 깔고 앉은 칸을 한 장에 모은다.
     //  여기 올라간 것만 "있는 것"이다 — 사람 자리 고르기, 보행 경로, 추가 배치가
     //  전부 이 표 하나를 본다.
     const grid = makeOcc(W, D);
-    for (const t of slots) if (t.owned) {
+    for (const t of slots) if (t.owned && t.id !== editSkip) {
       const [gw, gd] = cellsOf("table_6");
-      grid.put(t.cx, t.cy, gw, gd, 1);      // 둘레 한 칸은 의자 자리 — 사람이 가로지르면 안 된다
+      // 걷는 사람을 막는 둘레는 **2칸**이다. 1칸이면 좌석 링(테이블 중심에서 2칸 남짓)
+      // 안쪽까지 걸어 들어와 앉은 손님과 겹친다. 가구 배치는 solid 만 보므로
+      // 이 값을 키워도 테이블끼리 붙여 놓는 데는 지장이 없다.
+      grid.put(t.cx, t.cy, gw, gd, 2);
     }
     if (bar) {
       // 카운터 + 안쪽 작업 공간 + 스툴 줄까지 한 덩어리로 본다
       for (let g = bar.cy - bar.len / 2; g <= bar.cy + bar.len / 2; g += 1) grid.put(1.6, g, 3, 1, 0);
     }
-    for (const b2 of booths) { const [gw, gd] = cellsOf("sofa"); grid.put(b2[0], b2[1], gw, gd, 1); }
-    if (host) { const [gw, gd] = cellsOf("host_desk"); grid.put(host.cx, host.cy, gw, gd, 0); }
-    for (const p of props) { const [gw, gd] = cellsOf(p.a); grid.put(p.cx, p.cy, gw, gd, 0); }
+    for (const b2 of booths) {
+      const [gw, gd] = cellsOf("sofa");
+      const sw = b2.rot % 2 ? gd : gw, sd = b2.rot % 2 ? gw : gd;   // 돌리면 발자국도 돌아간다
+      if (b2.id !== editSkip) grid.put(b2.cx, b2.cy, sw, sd, 1);
+    }
+    if (host && host.id !== editSkip) { const [gw, gd] = cellsOf("host_desk"); grid.put(host.cx, host.cy, gw, gd, 0); }
+    for (const p of props) if (p.id !== editSkip) { const [gw, gd] = cellsOf(p.a); grid.put(p.cx, p.cy, gw, gd, 0); }
 
     // 표(PLANS)에 적힌 자리를 다 쓰고도 테이블이 남으면 격자에서 빈 자리를 찾아 놓는다.
     // 손으로 맞춘 1~4번 자리의 구도는 그대로 두고, 그 다음부터만 자동으로 채운다.
@@ -621,7 +695,7 @@ const PubScene2D = (() => {
       for (let n = slots.length; n < shown; n++) {
         const spot = findSpot(grid, tw, td, 1, slots.map((t) => [t.cx, t.cy]));
         if (!spot) break;
-        slots.push({ i: n, cx: spot[0], cy: spot[1], owned: n < owned });
+        slots.push({ i: n, ...placed("table:" + n, spot[0], spot[1]), owned: n < owned });
         grid.put(spot[0], spot[1], tw, td, 1);
       }
     }
@@ -673,13 +747,18 @@ const PubScene2D = (() => {
     }
     // 소파 손님 — 소파가 +gx 를 보므로 손님도 같은 쪽을 본다(앞모습). 소파 앉는 면이
     // 중심에서 살짝 +gx 라 그림 순서상 등받이 앞에 놓인다.
+    //  손님은 **소파가 보는 쪽**에 앉고 같은 쪽을 본다. 앉는 면은 소파 중심에서
+    //  보는 방향으로 살짝 나와 있고, 여럿이면 소파를 따라(직각 방향으로) 늘어선다.
     booths.forEach((bs, i) => {
       if (occ < 0.25) return;
       const n = occ > 0.7 ? 2 : 1;
+      const [dx, dy] = DIRV[bs.rot % 4];
+      const [px, py] = [-dy, dx];                     // 소파가 뻗은 방향(직각)
       for (let j = 0; j < n; j++) {
         const seed = 600 + i * 17 + j * 5;
-        people.push({ gx: bs[0] + 0.35, gy: bs[1] - 0.45 + j * 0.9, mode: "sit",
-                      who: pick(WHO, seed), hx: 1, hy: 0, seat: true, seed,
+        const t2 = (j - (n - 1) / 2) * 0.9;
+        people.push({ gx: bs.cx + dx * 0.35 + px * t2, gy: bs.cy + dy * 0.35 + py * t2,
+                      mode: "sit", who: pick(WHO, seed), hx: dx, hy: dy, seat: true, seed,
                       emote: hash(seed) % 4 === 0 ? pick(EMOTE, seed + 1) : null });
       }
     });
@@ -967,11 +1046,12 @@ const PubScene2D = (() => {
   }
 
   /** 소파 — 에셋 벤치보다 덩치가 커서 라운지가 라운지답게 보인다. */
-  function booth(cx, cy) {
-    // 소파는 서쪽을 등지고 +gx(홀 안쪽·카메라 쪽)를 본다 — 앞벽을 등지게 두면
-    // 등받이만 보여서 앉은 손님이 통째로 가려진다.
-    blitSeat("sofa", cx, cy, 1, 0);
-    blitProp("lounge_table", cx + 1.4, cy + 0.1, "gx");
+  function booth(b) {
+    const [dx, dy] = DIRV[(b.rot || 0) % 4];
+    const r = blitSeat("sofa", b.cx, b.cy, dx, dy);
+    if (r && b.id) edit.hits.push({ ...r, id: b.id, a: "sofa", rot: b.rot || 0 });
+    // 테이블은 소파가 보는 쪽 앞에 둔다 — 방향을 돌리면 같이 돈다.
+    blitProp("lounge_table", b.cx + dx * 1.4, b.cy + dy * 1.4, dx ? "gx" : "gy");
   }
 
   /** 허리 높이 앞벽 — 이게 있어야 "건물 안"으로 보인다. */
@@ -1061,12 +1141,89 @@ const PubScene2D = (() => {
     PixelFont.draw(ctx, px - tw / 2 + 6 * sc, py - h + 2 * sc, txt, PAL.gold, sc, "left", 1);
   }
 
+  // ---------------- 배치 모드 그리기 ----------------
+  /** 한 칸을 마름모로 칠한다. */
+  function cellDiamond(gx, gy, fill, stroke) {
+    const px = sx(gx + 1, gy + 1), py = sy(gx + 1, gy + 1);
+    const q = [[px, py], [px + TW / 2, py - TH / 2], [px, py - TH], [px - TW / 2, py - TH / 2]];
+    if (fill) poly(q, fill);
+    if (stroke) {
+      line(q[0][0], q[0][1], q[1][0], q[1][1], stroke);
+      line(q[1][0], q[1][1], q[2][0], q[2][1], stroke);
+      line(q[2][0], q[2][1], q[3][0], q[3][1], stroke);
+      line(q[3][0], q[3][1], q[0][0], q[0][1], stroke);
+    }
+  }
+
+  /** 편집 모드 오버레이 — 격자, 집을 수 있는 것 표시, 놓을 자리의 가부. */
+  function drawEditOverlay(L, t) {
+    // 바닥 격자 — 어디가 한 칸인지 보여야 옮길 마음이 생긴다
+    ctx.globalAlpha = 0.28;
+    for (let gy = 0; gy < ROOM.d; gy++)
+      for (let gx = 0; gx < ROOM.w; gx++) {
+        const px = sx(gx + 1, gy + 1);
+        if (px < -TW || px > VW + TW) continue;
+        cellDiamond(gx, gy, null, "#ffffff");
+      }
+    ctx.globalAlpha = 1;
+
+    // 들고 있는 것: 놓을 자리를 칸으로 보여 준다(초록=가능, 빨강=불가)
+    const h = edit.hold;
+    if (h) {
+      const col = h.ok ? "#49d17a" : "#e0524f";
+      const x0 = Math.round(h.cx - h.gw / 2), y0 = Math.round(h.cy - h.gd / 2);
+      ctx.globalAlpha = 0.62;
+      for (let y = y0; y < y0 + h.gd; y++)
+        for (let x = x0; x < x0 + h.gw; x++) cellDiamond(x, y, col, "#ffffff");
+      ctx.globalAlpha = 1;
+      // 들고 있는 그림을 반투명하게 겹쳐 그린다
+      ctx.globalAlpha = 0.75;
+      if (h.a === "sofa") blitSeat("sofa", h.cx, h.cy, ...DIRV[h.rot % 4]);
+      else blitProp(h.a, h.cx, h.cy, "gy");
+      ctx.globalAlpha = 1;
+    } else {
+      // 집을 수 있는 것에 점선 테두리
+      // 테두리는 line() 으로 긋는다 — 프리뷰 하네스의 가짜 캔버스에는 strokeRect 가 없고,
+      // 이 파일의 다른 곳도 전부 line()/poly() 만 쓴다.
+      ctx.globalAlpha = 0.5 + 0.2 * Math.sin(t * 0.004);
+      for (const e of edit.hits) {
+        const x1 = e.x + e.w - 1, y1 = e.y + e.h - 1;
+        line(e.x, e.y, x1, e.y, "#ffd76a");
+        line(x1, e.y, x1, y1, "#ffd76a");
+        line(x1, y1, e.x, y1, "#ffd76a");
+        line(e.x, y1, e.x, e.y, "#ffd76a");
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 상단 안내 + 버튼
+    const bh = 22 * S, pad = 6 * S;
+    R(0, 0, VW, bh + pad * 2, "rgba(20,14,12,0.82)");
+    PixelFont.draw(ctx, pad, pad + 5 * S, "DRAG TO MOVE", "#ffe9c0", S, "left", 1);
+    const defs = [];
+    const canRot = edit.hold && edit.hold.a === "sofa";
+    // PixelFont 는 영문·숫자만 있다(간판도 그래서 영문이다). 한글은 넣지 않는다.
+    if (canRot) defs.push({ label: "TURN", w: 30 * S, bg: "#3b6ea5", act: "rot" });
+    defs.push({ label: "DONE", w: 30 * S, bg: "#2f7d4f", act: "done" });
+    let bx = VW - pad;
+    for (const d of defs) {
+      bx -= d.w;
+      const by = pad, bw = d.w, bhh = bh;
+      R(bx, by, bw, bhh, d.bg);
+      PixelFont.draw(ctx, bx + 5 * S, by + 5 * S, d.label, "#ffffff", S, "left", 1);
+      edit.btns.push({ x: bx, y: by, w: bw, h: bhh, act: d.act });
+      bx -= pad;
+    }
+  }
+
   // ---------------- 프레임 ----------------
   function frame(t) {
     raf = requestAnimationFrame(frame);
     if (!ctx || !loaded || !layout) return;
     const L = layout, T = THEMES[theme] || THEMES.classic;
     hits = [];
+    edit.hits = [];
+    edit.btns = [];
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, VW, VH);
 
@@ -1124,12 +1281,13 @@ const PubScene2D = (() => {
       }
       for (const gy of L.bar.stools) add(2.7 + gy - 0.1, () => blitProp("stool", 2.7, gy, "gy"));
     }
-    for (const b of L.booths) add(b[0] + b[1], () => booth(b[0], b[1]));
+    for (const b of L.booths) add(b.cx + b.cy, () => booth(b));
     for (const p of L.props) {
       const px = sx(p.cx, p.cy), py = sy(p.cx, p.cy);
       add(p.cx + p.cy, () => {
         const r = blitProp(p.a, p.cx, p.cy, p.axis);
         if (r && p.fixture) hits.push({ x: r.x, y: r.y, w: r.w, h: r.h, info: { type: "fixture", id: p.fixture } });
+        if (r && p.id) edit.hits.push({ ...r, id: p.id, a: p.a, rot: 0 });
       });
     }
     for (const s of L.slots) {
@@ -1144,14 +1302,16 @@ const PubScene2D = (() => {
       SEAT_ANGLE.forEach((deg) => {
         const a = (deg * Math.PI) / 180;
         const [gx, gy] = seatAt(s.cx, s.cy, deg, SEAT_K);
-        // 의자는 앉은 사람보다 한쪽만 앞이다 — 가까운 쪽(아래)은 등받이가 사람을 가리고,
-        // 먼 쪽(위)은 사람 뒤에 놓인다. 그래야 "앉아 있다"로 보인다.
-        const near = Math.sin(a) > 0;
-        add(gx + gy + (near ? 0.12 : -0.12), () => blitSeat("chair", gx, gy, s.cx - gx, s.cy - gy));
+        // 의자는 **항상 사람 뒤에** 그린다. 예전엔 가까운 쪽 의자를 사람 앞에 그렸는데
+        // ("등받이가 다리를 가려야 앉아 보인다"는 생각이었다), 등받이가 불투명해서
+        // 정면 아래 자리는 손님이 통째로 사라졌다. 뒤에 두면 등받이가 어깨 옆으로
+        // 삐져나와 앉은 것으로 읽히고 사람은 항상 보인다.
+        add(gx + gy - 0.12, () => blitSeat("chair", gx, gy, s.cx - gx, s.cy - gy));
       });
       add(s.cx + s.cy, () => {
         const r = blitProp("table_6", s.cx, s.cy, "gy");
         if (r) hits.push({ x: r.x, y: r.y, w: r.w, h: r.h, info: { type: "table", index: s.i } });
+        if (r && s.id) edit.hits.push({ ...r, id: s.id, a: "table_6", rot: 0 });
       });
     }
     if (L.expand) {
@@ -1166,6 +1326,7 @@ const PubScene2D = (() => {
       add(L.host.cx + L.host.cy, () => {
         const r = blitProp("board", L.host.cx, L.host.cy, "gx");
         if (r) hits.push({ x: r.x, y: r.y, w: r.w, h: r.h, info: { type: "tournament" } });
+        if (r) edit.hits.push({ ...r, id: L.host.id, a: "host_desk", rot: 0 });
       });
     }
     for (const n of L.people) {
@@ -1173,9 +1334,9 @@ const PubScene2D = (() => {
       add(st.gx + st.gy + 0.02, () => {
         const px = Math.round(sx(st.gx, st.gy)), py = Math.round(sy(st.gx, st.gy));
         ctx.globalAlpha = 0.22;
-        PixelSprites.ellipse(ctx, px, py - 2, 7 * S, 3 * S, "#2a1c12");
+        PixelSprites.ellipse(ctx, px, py - 2 + (st.drop || 0), 7 * S, 3 * S, "#2a1c12");
         ctx.globalAlpha = 1;
-        blit(st.sprite, px, py + st.bob * S, st.flip);
+        blit(st.sprite, px, py + st.bob * S + (st.drop || 0), st.flip);
         const im = A(st.sprite);
         const headY = py - (im ? im.height * S : 32 * S);
         const b = bubbles.find((q) => q.seed === n.seed);
@@ -1193,6 +1354,8 @@ const PubScene2D = (() => {
 
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.fn();
+
+    if (edit.on) drawEditOverlay(L, t);
 
     // ---- 조명 · 라벨 (전부 앞에) ----
     for (const s of L.slots) {
@@ -1261,29 +1424,96 @@ const PubScene2D = (() => {
         return;
       }
     };
+    /** 편집 모드에서 그 자리에 있는 "집을 수 있는 것" — 나중에 그린 것이 위. */
+    const pickAt = (x, y) => {
+      for (let i = edit.hits.length - 1; i >= 0; i--) {
+        const e2 = edit.hits[i];
+        if (x >= e2.x && y >= e2.y && x <= e2.x + e2.w && y <= e2.y + e2.h) return e2;
+      }
+      return null;
+    };
+    const btnAt = (x, y) => edit.btns.find((b) => x >= b.x && y >= b.y && x <= b.x + b.w && y <= b.y + b.h);
+    /** 들고 있는 것을 지금 좌표에 놓을 수 있는지 본다. */
+    const testHold = () => {
+      const h = edit.hold;
+      if (!h || !layout || !layout.grid) return;
+      const gw = h.rot % 2 ? h.gd0 : h.gw0, gd = h.rot % 2 ? h.gw0 : h.gd0;
+      h.gw = gw; h.gd = gd;
+      h.ok = layout.grid.fits(h.cx, h.cy, gw, gd, 0);
+    };
+
     canvas.addEventListener("pointerdown", (e) => {
       const [x, y] = toCanvas(e);
-      press = { x, y, camX, camY, moved: false };
+      if (edit.on) {
+        const b = btnAt(x, y);
+        if (b) {
+          if (b.act === "done") { setEditMode(false); }
+          else if (b.act === "rot" && edit.hold) { edit.hold.rot = (edit.hold.rot + 1) % 4; testHold(); }
+          return;
+        }
+        const p = pickAt(x, y);
+        if (p) {
+          const [gw0, gd0] = cellsOf(p.a);
+          // 들고 있는 동안은 점유 격자에서 자기 자신을 뺀다 — 안 그러면 제자리에 못 놓는다
+          editSkip = p.id;
+          rebuild();
+          const [gx, gy] = toGrid(x, y);
+          edit.hold = { id: p.id, a: p.a, rot: p.rot || 0, gw0, gd0, gw: gw0, gd: gd0,
+                        cx: snapHalf(gx), cy: snapHalf(gy), ok: true, grab: [x, y] };
+          testHold();
+          press = { x, y, camX, camY, moved: false, dragItem: true };
+          if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+          return;
+        }
+      }
+      press = { x, y, camX, camY, moved: false, t0: performance.now() };
       if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
     });
+
     canvas.addEventListener("pointermove", (e) => {
       if (!press) return;
       const [x, y] = toCanvas(e);
       const dx = x - press.x, dy = y - press.y;
       if (!press.moved && Math.abs(dx) + Math.abs(dy) > 10) press.moved = true;
+      if (press.dragItem && edit.hold) {
+        const [gx, gy] = toGrid(x, y);
+        edit.hold.cx = snapHalf(gx);
+        edit.hold.cy = snapHalf(gy);
+        testHold();
+        return;
+      }
       if (press.moved) { camX = press.camX + dx; camY = press.camY + dy; clampCam(); }
     });
+
     const release = (e) => {
       if (!press) return;
-      if (!press.moved) { const [x, y] = toCanvas(e); tapAt(x, y); }
+      if (press.dragItem && edit.hold) {
+        const h = edit.hold;
+        if (h.ok) { place[h.id] = { cx: h.cx, cy: h.cy, rot: h.rot }; savePlace(); }
+        edit.hold = null;
+        editSkip = null;
+        rebuild();
+        press = null;
+        return;
+      }
+      if (!press.moved) {
+        const [x, y] = toCanvas(e);
+        // 길게 누르면 배치 모드로 들어간다 — HUD 를 안 건드리고 넣을 수 있는 입구다.
+        if (!edit.on && press.t0 && performance.now() - press.t0 > 600) setEditMode(true);
+        else if (!edit.on) tapAt(x, y);
+      }
       press = null;
     };
     canvas.addEventListener("pointerup", release);
     canvas.addEventListener("pointercancel", () => { press = null; });
     canvas.addEventListener("pointerleave", () => { press = null; });
+    loadPlace();
     loadAll().then(() => { if (snap) layout = buildLayout(snap); });
     if (!raf) raf = requestAnimationFrame(frame);
   }
+
+  /** 배치가 바뀌었으니 레이아웃을 다시 계산한다. */
+  function rebuild() { if (snap) layout = buildLayout(snap); }
 
   function update(s) {
     snap = s;
@@ -1315,7 +1545,20 @@ const PubScene2D = (() => {
   function setFloor(n) { activeFloor = n === 2 ? 2 : 1; }
   function getFloorInfo() { return { active: activeFloor, unlocked: 1 }; }
 
-  Object.assign(api, { init, update, chipBurst, spawnDiamondBubble, setFloor, getFloorInfo });
+  /** 배치 모드 켜고 끄기. game.js 에서 버튼을 달고 싶으면 이걸 부르면 된다. */
+  function setEditMode(on) {
+    edit.on = !!on;
+    if (!edit.on) { edit.hold = null; editSkip = null; rebuild(); }
+    if (typeof api.onEditMode === "function") api.onEditMode(edit.on);
+  }
+  function isEditMode() { return edit.on; }
+  /** 옮긴 것을 전부 원래 자리로. */
+  function resetPlacement() { place = {}; savePlace(); rebuild(); }
+
+  Object.assign(api, { init, update, chipBurst, spawnDiamondBubble, setFloor, getFloorInfo,
+    setEditMode, isEditMode, resetPlacement,
+    // 검사 도구용 — 계산된 배치와 지금 들고 있는 것, 격자→화면 변환을 내준다.
+    __layout: () => layout, __hold: () => edit.hold, __screen: (gx, gy) => ({ px: Math.round(sx(gx, gy)), py: Math.round(sy(gx, gy)) }) });
   return api;
 })();
 
